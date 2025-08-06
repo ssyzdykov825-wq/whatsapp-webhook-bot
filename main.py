@@ -3,26 +3,22 @@ import requests
 import threading
 import sys
 import os
-from dotenv import load_dotenv
-
-# Загрузка переменных из .env
-load_dotenv()
 
 app = Flask(__name__)
 
-# 📡 URL 360dialog API
+# 🔐 Получаем API-ключ из переменной окружения
+WHATSAPP_API_KEY = os.getenv("WHATSAPP_API_KEY")
+
+# ✅ Cloud API URL 360dialog
 WHATSAPP_API_URL = 'https://waba-v2.360dialog.io/v1/messages'
 
-# 🔐 API-ключ из .env
-D360_API_KEY = os.getenv("D360_API_KEY")
-
-# Заголовки запроса
+# ✅ Заголовки запроса
 HEADERS = {
-    'D360-API-KEY': D360_API_KEY,
+    'D360-API-KEY': WHATSAPP_API_KEY,
     'Content-Type': 'application/json'
 }
 
-# ✅ Функция обработки и ответа на сообщение
+# ✅ Асинхронная обработка сообщений
 def handle_message(sender, text):
     print(f"🚀 Обрабатываю сообщение от {sender}: {text}")
     sys.stdout.flush()
@@ -48,8 +44,6 @@ def handle_message(sender, text):
         print("🚨 Ошибка при отправке:", str(e))
         sys.stdout.flush()
 
-
-# 📥 Webhook-обработчик входящих сообщений
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
@@ -76,7 +70,5 @@ def webhook():
 
     return "ok", 200
 
-
-# 🏁 Точка входа (если запускаешь локально)
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
