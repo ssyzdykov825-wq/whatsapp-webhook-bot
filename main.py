@@ -1,31 +1,31 @@
-from flask import Flask, request
+import os
 import requests
 import threading
 import sys
-import os
+from flask import Flask, request
 
 app = Flask(__name__)
 
-# 🔐 Получаем API-ключ из переменной окружения
+# ✅ Получаем API-ключ из переменных окружения (Render → Environment)
 WHATSAPP_API_KEY = os.getenv("WHATSAPP_API_KEY")
 
-# ✅ Cloud API URL 360dialog
-WHATSAPP_API_URL = 'https://waba-v2.360dialog.io/v1/messages'
+# ✅ Правильный URL (для 360dialog Cloud API)
+WHATSAPP_API_URL = "https://waba-v2.360dialog.io/v1/messages"
 
-# ✅ Заголовки запроса
+# ✅ Заголовки
 HEADERS = {
-    'D360-API-KEY': WHATSAPP_API_KEY,
-    'Content-Type': 'application/json'
+    "D360-API-KEY": WHATSAPP_API_KEY,
+    "Content-Type": "application/json"
 }
 
-# ✅ Асинхронная обработка сообщений
+
+# ✅ Отправка ответа пользователю
 def handle_message(sender, text):
     print(f"🚀 Обрабатываю сообщение от {sender}: {text}")
     sys.stdout.flush()
 
     payload = {
-        "messaging_product": "whatsapp",
-        "recipient_type": "individual",
+        "recipient_type": "individual",  # ← ОБЯЗАТЕЛЬНО!
         "to": sender,
         "type": "text",
         "text": {
@@ -33,17 +33,23 @@ def handle_message(sender, text):
         }
     }
 
+    print("📦 Payload:", payload)
+
     try:
         response = requests.post(WHATSAPP_API_URL, headers=HEADERS, json=payload)
+        print("📤 Ответ от сервера:", response.status_code, response.text)
+
         if response.status_code != 200:
             print("❌ Ошибка отправки:", response.status_code, response.text)
         else:
-            print("📤 Успешно отправлено:", response.status_code)
+            print("✅ Успешно отправлено!")
         sys.stdout.flush()
     except Exception as e:
         print("🚨 Ошибка при отправке:", str(e))
         sys.stdout.flush()
 
+
+# ✅ Webhook — входящие сообщения
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
@@ -70,5 +76,7 @@ def webhook():
 
     return "ok", 200
 
+
+# ✅ Запуск локально (на Render не используется, но пусть будет)
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
