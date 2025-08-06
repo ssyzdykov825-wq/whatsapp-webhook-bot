@@ -6,26 +6,26 @@ from flask import Flask, request
 
 app = Flask(__name__)
 
-# ✅ Получаем API-ключ из переменных окружения (Render → Environment)
+# ✅ Получаем API-ключ из переменных окружения
 WHATSAPP_API_KEY = os.getenv("WHATSAPP_API_KEY")
 
-# ✅ Правильный URL (для 360dialog Cloud API)
+# ✅ URL для Cloud API (через 360dialog)
 WHATSAPP_API_URL = "https://waba-v2.360dialog.io/v1/messages"
 
-# ✅ Заголовки
+# ✅ Заголовки с API-ключом
 HEADERS = {
     "D360-API-KEY": WHATSAPP_API_KEY,
     "Content-Type": "application/json"
 }
 
-
-# ✅ Отправка ответа пользователю
+# ✅ Обработка входящих сообщений
 def handle_message(sender, text):
     print(f"🚀 Обрабатываю сообщение от {sender}: {text}")
     sys.stdout.flush()
 
     payload = {
-        "recipient_type": "individual",  # ← ОБЯЗАТЕЛЬНО!
+        "messaging_product": "whatsapp",  # ← ОБЯЗАТЕЛЬНО!
+        "recipient_type": "individual",
         "to": sender,
         "type": "text",
         "text": {
@@ -48,8 +48,7 @@ def handle_message(sender, text):
         print("🚨 Ошибка при отправке:", str(e))
         sys.stdout.flush()
 
-
-# ✅ Webhook — входящие сообщения
+# ✅ Обработка вебхука
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
@@ -76,7 +75,6 @@ def webhook():
 
     return "ok", 200
 
-
-# ✅ Запуск локально (на Render не используется, но пусть будет)
+# ✅ Запуск локально или на сервере
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
