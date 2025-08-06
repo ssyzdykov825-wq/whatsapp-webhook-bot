@@ -1,52 +1,66 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request
 import requests
-import os
+import threading
+import sys
 
 app = Flask(__name__)
 
-WHATSAPP_API_URL = "https://waba-v2.360dialog.io/messages"
-WHATSAPP_TOKEN = os.environ.get("WHATSAPP_TOKEN")  # Храним токен безопасно через env-переменные
+# ✅ Cloud API URL (360dialog)
+WHATSAPP_API_URL = 'https://waba-v2.360dialog.io/v1/messages'
 
-def send_whatsapp_text(to_number: str, message: str, preview_url: bool = False):
-    headers = {
-        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
-        "Content-Type": "application/json"
-    }
+# ✅ Подставь свой API-ключ
+HEADERS = {
+    'D360-API-KEY': 'ASGoZdyRzzwoTVnk6Q1p4eRAAK',  # ← твой ключ
+    'Content-Type': 'application/json'
+}
+
+# ✅ Асинхронная отправка
+def handle_message(sender, text):
+    print(f"🚀 Обрабатываю сообщение от {sender}: {text}")
+    sys.stdout.flush()
 
     payload = {
         "messaging_product": "whatsapp",
         "recipient_type": "individual",
-        "to": to_number,
+        "to": sender,
         "type": "text",
         "text": {
-            "body": message,
-            "preview_url": preview_url
+            "body": f"Вы сказали: {text}"
         }
     }
 
-    response = requests.post(WHATSAPP_API_URL, json=payload, headers=headers)
+    try:
+        response = requests.post(WHATSAPP_API_URL, headers=HEADERS, json=payload)
+        if response.status_code != 200:
+            print("❌ Ошибка отправки:", response.status_code, response.text)
+        else:
+            print("📤 Успешно отправлено:", response.status_code)
+    except Exception as e:
+        print("🚨 Ошибка при отправке:", str(e))
 
-    if response.status_code == 201:
-        return {"status": "success", "response": response.json()}
-    else:
-        return {"status": "error", "code": response.status_code, "message": response.text}
+    sys.stdout.flush()
 
-@app.route('/', methods=['GET'])
-def home():
-    return "✅ WhatsApp бот работает"
-
-@app.route('/send', methods=['POST'])
-def send():
+# ✅ Вебхук от WhatsApp
+@app.route('/webhook', methods=['POST'])
+def webhook():
     data = request.get_json()
-    to = data.get("to")
-    message = data.get("message")
-    preview = data.get("preview_url", False)
+    print("📩 Входящий JSON:", data)
+    sys.stdout.flush()
 
-    if not to or not message:
-        return jsonify({"error": "Missing 'to' or 'message'"}), 400
+    if not data:
+        return "no data", 400
 
-    result = send_whatsapp_text(to, message, preview)
-    return jsonify(result)
+    try:
+        for change in data.get("entry", [])[0].get("changes", []):
+            value = change.get("value", {})
+            messages = value.get("messages", [])
+            for message in messages:
+                if message.get("type") == "text":
+                    sender = message["from"]
+                    text = message["text"]["body"]
+                    print(f"💬 Получено сообщение от {sender}: {text}")
+                    threading.Thread(target=handle_message, args=(sender, text)).start()
+    except Exception as e:
+        print("⚠️ Ошибка обработки JSON:", str(e))
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)
+    return "ok", 200
