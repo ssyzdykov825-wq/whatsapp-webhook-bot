@@ -3,12 +3,17 @@ import requests
 import threading
 import sys
 from flask import Flask, request, jsonify
+import openai
 
 app = Flask(__name__)
 
-# 🔐 Получаем переменные окружения
-WHATSAPP_API_KEY = os.getenv("WHATSAPP_API_KEY")  # В Render в настройках "Environment"
+# 🔐 Переменные окружения
+WHATSAPP_API_KEY = os.getenv("WHATSAPP_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 WHATSAPP_API_URL = "https://waba-v2.360dialog.io/messages"
+
+# 🧠 Настройка OpenAI
+openai.api_key = OPENAI_API_KEY
 
 # 🛡️ Заголовки запроса
 HEADERS = {
@@ -16,10 +21,28 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
+# 🔁 GPT-обработка текста
+def generate_gpt_reply(user_message):
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4o",  # Или "gpt-4", если у тебя доступ
+            messages=[
+                {"role": "system", "content": "Ты дружелюбный ассистент, отвечай кратко и понятно."},
+                {"role": "user", "content": user_message}
+            ]
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        print("❌ GPT ошибка:", str(e))
+        return "Извините, произошла ошибка при генерации ответа."
 
+# 💬 Обработка входящего сообщения
 def handle_message(sender, text):
     print(f"🚀 Обрабатываю сообщение от {sender}: {text}")
     sys.stdout.flush()
+
+    # 👉 Генерация ответа GPT
+    reply = generate_gpt_reply(text)
 
     payload = {
         "messaging_product": "whatsapp",
@@ -27,7 +50,7 @@ def handle_message(sender, text):
         "to": sender,
         "type": "text",
         "text": {
-            "body": f"Вы сказали: {text}"
+            "body": reply
         }
     }
 
@@ -44,7 +67,7 @@ def handle_message(sender, text):
         print("🚨 Ошибка при отправке:", str(e))
         sys.stdout.flush()
 
-
+# 📩 Webhook для входящих сообщений
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
@@ -71,7 +94,6 @@ def webhook():
 
     return jsonify({"status": "ok"}), 200
 
-
-# ✅ ВАЖНО: правильная проверка запуска
+# ✅ Старт приложения
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
