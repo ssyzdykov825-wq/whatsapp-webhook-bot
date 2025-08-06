@@ -1,99 +1,80 @@
 import os
 import requests
-import threading
-import sys
 from flask import Flask, request, jsonify
-import openai
+from openai import OpenAI
 
+# Инициализация Flask и OpenAI клиента
 app = Flask(__name__)
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-# 🔐 Переменные окружения
-WHATSAPP_API_KEY = os.getenv("WHATSAPP_API_KEY")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# Настройки 360dialog
 WHATSAPP_API_URL = "https://waba-v2.360dialog.io/messages"
+WHATSAPP_API_KEY = os.environ.get("WHATSAPP_API_KEY")
 
-# 🧠 Настройка OpenAI
-openai.api_key = OPENAI_API_KEY
-
-# 🛡️ Заголовки запроса
+# Хедеры для запроса в 360dialog
 HEADERS = {
-    "D360-API-KEY": WHATSAPP_API_KEY,
-    "Content-Type": "application/json"
+    "Content-Type": "application/json",
+    "D360-API-KEY": WHATSAPP_API_KEY
 }
 
-# 🔁 GPT-обработка текста
-def generate_gpt_reply(user_message):
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4o",  # Или "gpt-4", если у тебя доступ
-            messages=[
-                {"role": "system", "content": "Ты дружелюбный ассистент, отвечай кратко и понятно."},
-                {"role": "user", "content": user_message}
-            ]
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        print("❌ GPT ошибка:", str(e))
-        return "Извините, произошла ошибка при генерации ответа."
-
-# 💬 Обработка входящего сообщения
-def handle_message(sender, text):
-    print(f"🚀 Обрабатываю сообщение от {sender}: {text}")
-    sys.stdout.flush()
-
-    # 👉 Генерация ответа GPT
-    reply = generate_gpt_reply(text)
-
+# Отправка сообщения в WhatsApp
+def send_whatsapp_message(recipient_phone, message_text):
     payload = {
         "messaging_product": "whatsapp",
-        "recipient_type": "individual",
-        "to": sender,
+        "to": recipient_phone,
         "type": "text",
         "text": {
-            "body": reply
+            "body": message_text
         }
     }
+    response = requests.post(WHATSAPP_API_URL, headers=HEADERS, json=payload)
+    print(f"📤 Ответ от сервера: {response.status_code} {response.text}")
+    return response
 
+# Получение ответа от ChatGPT
+def get_gpt_response(user_message):
     try:
-        response = requests.post(WHATSAPP_API_URL, headers=HEADERS, json=payload)
-        print("📤 Ответ от сервера:", response.status_code, response.text)
-
-        if response.status_code != 200:
-            print("❌ Ошибка отправки:", response.status_code, response.text)
-        else:
-            print("✅ Сообщение отправлено!")
-        sys.stdout.flush()
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "Ты — умный WhatsApp бот-помощник, отвечай кратко и по делу."},
+                {"role": "user", "content": user_message}
+            ],
+            temperature=0.7
+        )
+        reply = response.choices[0].message.content.strip()
+        return reply
     except Exception as e:
-        print("🚨 Ошибка при отправке:", str(e))
-        sys.stdout.flush()
+        print(f"❌ GPT ошибка: {e}")
+        return "Произошла ошибка. Попробуйте позже."
 
-# 📩 Webhook для входящих сообщений
+# Вебхук для приёма сообщений от WhatsApp
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
     print("📩 Входящий JSON:", data)
-    sys.stdout.flush()
-
-    if not data:
-        return jsonify({"status": "no data"}), 400
 
     try:
-        for change in data.get("entry", [])[0].get("changes", []):
-            value = change.get("value", {})
-            messages = value.get("messages", [])
-            for message in messages:
-                if message.get("type") == "text":
-                    sender = message["from"]
-                    text = message["text"]["body"]
-                    print(f"💬 Получено сообщение от {sender}: {text}")
-                    sys.stdout.flush()
-                    threading.Thread(target=handle_message, args=(sender, text)).start()
+        messages = data["entry"][0]["changes"][0]["value"].get("messages")
+        if messages:
+            user_message = messages[0]["text"]["body"]
+            user_phone = messages[0]["from"]
+
+            print(f"💬 Получено сообщение от {user_phone}: {user_message}")
+            print(f"🚀 Обрабатываю сообщение от {user_phone}: {user_message}")
+
+            gpt_reply = get_gpt_response(user_message)
+            send_whatsapp_message(user_phone, gpt_reply)
     except Exception as e:
-        print("⚠️ Ошибка обработки JSON:", str(e))
-        sys.stdout.flush()
+        print(f"❌ Ошибка обработки входящего запроса: {e}")
 
     return jsonify({"status": "ok"}), 200
 
-# ✅ Старт приложения
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)
+# Проверка доступности сервера
+@app.route('/', methods=['GET'])
+def home():
+    return "Бот запущен!", 200
+
+# Для запуска в Render
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
