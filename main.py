@@ -4,7 +4,7 @@ import threading
 import sys
 from flask import Flask, request
 
-app = Flask(name)
+app = Flask(__name__)  # ✅ правильно
 
 # Получаем API-ключ из переменных окружения
 WHATSAPP_API_KEY = os.getenv("WHATSAPP_API_KEY")
