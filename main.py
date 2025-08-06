@@ -5,15 +5,14 @@ import sys
 
 app = Flask(__name__)
 
-# ✅ Cloud API URL от 360dialog
+# ✅ URL Cloud API 360dialog
 WHATSAPP_API_URL = 'https://waba-v2.360dialog.io/v1/messages'
 
-# ✅ Твой API-ключ от 360dialog (замени на свой!)
+# ✅ Укажи свой API-ключ от 360dialog
 HEADERS = {
-    'D360-API-KEY': 'ASGoZdyRzzwoTVnk6Q1p4eRAAK',  # <-- вставь свой!
+    'D360-API-KEY': 'ASGoZdyRzzwoTVnk6Q1p4eRAAK',  # ⬅️ Замени на свой, если надо
     'Content-Type': 'application/json'
 }
-
 
 # ✅ Асинхронная отправка сообщения
 def handle_message(sender, text):
@@ -21,7 +20,7 @@ def handle_message(sender, text):
     sys.stdout.flush()
 
     payload = {
-        'messaging_product': 'whatsapp',
+        'recipient_type': 'individual',  # ✅ обязательно!
         'to': sender,
         'type': 'text',
         'text': {
@@ -40,46 +39,50 @@ def handle_message(sender, text):
         print("🚨 Ошибка при отправке:", str(e))
         sys.stdout.flush()
 
-
-# ✅ Обработка входящих вебхуков от 360dialog
+# ✅ Обработка входящего вебхука
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
     print("📩 Входящий JSON:", data)
     sys.stdout.flush()
 
-    if not data or 'entry' not in data:
-        print("⛔ Пустой или неверный JSON")
+    if not data:
         return "no data", 400
 
-    for entry in data['entry']:
-        for change in entry.get('changes', []):
-            value = change.get('value', {})
+    try:
+        for entry in data.get("entry", []):
+            for change in entry.get("changes", []):
+                value = change.get("value", {})
 
-            # ✅ Обработка сообщений
-            if 'messages' in value:
-                for message in value['messages']:
-                    if message.get('type') == 'text':
-                        sender = message['from']
-                        text = message['text']['body']
-                        print(f"💬 Получено сообщение от {sender}: {text}")
+                # Сообщение от пользователя
+                if "messages" in value:
+                    for message in value["messages"]:
+                        if message.get("type") == "text":
+                            sender = message["from"]
+                            text = message["text"]["body"]
+                            print(f"💬 Получено сообщение от {sender}: {text}")
+                            sys.stdout.flush()
+                            threading.Thread(target=handle_message, args=(sender, text)).start()
+                        else:
+                            print("⚠️ Необрабатываемый тип сообщения:", message.get("type"))
+                            sys.stdout.flush()
+
+                # Статусы доставки
+                if "statuses" in value:
+                    for status in value["statuses"]:
+                        print("📦 Статус доставки:", status)
                         sys.stdout.flush()
 
-                        # Асинхронная отправка ответа
-                        threading.Thread(target=handle_message, args=(sender, text)).start()
-                    else:
-                        print("⚠️ Тип сообщения не поддерживается:", message.get('type'))
-                        sys.stdout.flush()
-
-            # ✅ Обработка статусов доставки
-            if 'statuses' in value:
-                for status in value['statuses']:
-                    print("📦 Статус доставки:", status)
+                # Эхо-сообщения (ваши же ответы)
+                if "message_echoes" in value:
+                    print("↩️ Эхо-сообщение от системы (можно игнорировать)")
                     sys.stdout.flush()
 
-    # ⚡️ Возвращаем 200 сразу — важно для 360dialog!
-    return "ok", 200
+    except Exception as e:
+        print("❌ Ошибка при разборе вебхука:", str(e))
+        sys.stdout.flush()
 
+    return "ok", 200
 
 # ✅ Запуск сервера
 if __name__ == '__main__':
