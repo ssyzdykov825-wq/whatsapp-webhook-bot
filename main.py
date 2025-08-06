@@ -5,26 +5,27 @@ import sys
 
 app = Flask(__name__)
 
-# ✅ Cloud API URL от 360dialog
-WHATSAPP_API_URL = 'https://waba-v2.360dialog.io/v1/messages'
+# ✅ Cloud API от 360dialog
+WHATSAPP_API_URL = "https://api.360dialog.io/v1/messages"
 
-# ✅ API-ключ 360dialog
+# ✅ Ключ из 360dialog
+D360_API_KEY = "ASGoZdyRzzwoTVnk6Q1p4eRAAK"
+
 HEADERS = {
-    'D360-API-KEY': 'ASGoZdyRzzwoTVnk6Q1p4eRAAK',  # <-- свой ключ
-    'Content-Type': 'application/json'
+    "D360-API-KEY": D360_API_KEY,
+    "Content-Type": "application/json"
 }
 
-# ✅ Асинхронная отправка ответа
+
 def handle_message(sender, text):
     print(f"🚀 Обрабатываю сообщение от {sender}: {text}")
     sys.stdout.flush()
 
+    # Подготовка ответа
     payload = {
-        "messaging_product": "whatsapp",
         "to": sender,
         "type": "text",
         "text": {
-            "preview_url": False,
             "body": f"Вы сказали: {text}"
         }
     }
@@ -34,8 +35,9 @@ def handle_message(sender, text):
         print("📤 Ответ от API:", response.status_code, response.text)
         sys.stdout.flush()
     except Exception as e:
-        print("🚨 Ошибка при отправке:", str(e))
+        print("❌ Ошибка отправки:", str(e))
         sys.stdout.flush()
+
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -43,9 +45,12 @@ def webhook():
     print("📩 Входящий JSON:", data)
     sys.stdout.flush()
 
-    if not data:
-        return "no data", 400
+    # 🔁 Сразу отправляем 200 OK — это важно!
+    threading.Thread(target=process_webhook, args=(data,)).start()
+    return "ok", 200
 
+
+def process_webhook(data):
     try:
         for entry in data.get("entry", []):
             for change in entry.get("changes", []):
@@ -57,12 +62,10 @@ def webhook():
                         text = message["text"]["body"]
                         print(f"💬 Получено сообщение от {sender}: {text}")
                         sys.stdout.flush()
-                        threading.Thread(target=handle_message, args=(sender, text)).start()
+                        handle_message(sender, text)
     except Exception as e:
         print("⚠️ Ошибка обработки JSON:", str(e))
         sys.stdout.flush()
-
-    return "ok", 200
 
 
 if __name__ == '__main__':
