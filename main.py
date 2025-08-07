@@ -157,7 +157,12 @@ def get_gpt_response(user_msg, user_phone):
         next_stage = str(int(stage) + 1) if int(stage) < 6 else "6"
 
         USER_STATE[user_phone] = {
-            "history": history[-5:] + [{"user": user_msg, "bot": reply}],
+    "history": history[-5:] + [{"user": user_msg, "bot": reply}],
+    "last_message": user_msg,
+    "stage": next_stage,
+    "last_time": time.time(),
+    "followed_up": False
+}],
             "last_message": user_msg,
             "stage": next_stage
         }
@@ -197,6 +202,25 @@ def webhook():
 @app.route('/', methods=['GET'])
 def home():
     return "Healvix бот іске қосылды!", 200
+
+import threading
+import time
+
+FOLLOW_UP_DELAY = 600  # 10 минут
+FOLLOW_UP_MESSAGE = "Сізден жауап болмай жатыр 🤔 Көмек керек болса, түсіндіре кетейін. Былай істейік: мен өз атымнан жеңілдік жасап көрейін. Қазір Каспийде 5-10 мың бар ма?"
+
+def follow_up_checker():
+    while True:
+        now = time.time()
+        for phone, state in list(USER_STATE.items()):
+            last_time = state.get("last_time")
+            last_stage = state.get("stage", "0")
+            if last_time and (now - last_time > FOLLOW_UP_DELAY) and not state.get("followed_up"):
+                send_whatsapp_message(phone, "📌 Айдос: " + FOLLOW_UP_MESSAGE)
+                USER_STATE[phone]["followed_up"] = True
+        time.sleep(60)
+
+threading.Thread(target=follow_up_checker, daemon=True).start()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
