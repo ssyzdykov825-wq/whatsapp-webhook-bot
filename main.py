@@ -34,10 +34,10 @@ def send_whatsapp_message(recipient_phone, message_text):
 # Получение ответа от ChatGPT
 def get_gpt_response(user_message):
     try:
-response = client.chat.completions.create(
+        response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "Ты продающий бот по улучшению зрения. Отвечай по структуре AIDA: Attention — привлечь внимание, Interest — заинтересовать, Desire — усилить желание, Action — побудить к действию. Пиши живо, как человек, без шаблонов и канцелярщины. Используй свойства препарата."},
+                {"role": "system", "content": "Ты — умный WhatsApp бот-помощник, отвечай кратко и по делу."},
                 {"role": "user", "content": user_message}
             ],
             temperature=0.7
