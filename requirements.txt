@@ -3,4 +3,4 @@ requests
 gunicorn
 python-dotenv
 openai
-aiogram
+aiogram==3.4.1
