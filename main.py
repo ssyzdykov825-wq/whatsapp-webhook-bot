@@ -3,52 +3,62 @@ import requests
 from flask import Flask, request, jsonify
 from openai import OpenAI
 
-# Инициализация Flask и OpenAI клиента
 app = Flask(__name__)
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-# Настройки 360dialog
 WHATSAPP_API_URL = "https://waba-v2.360dialog.io/messages"
 WHATSAPP_API_KEY = os.environ.get("WHATSAPP_API_KEY")
 
-# Хедеры для запроса в 360dialog
 HEADERS = {
     "Content-Type": "application/json",
     "D360-API-KEY": WHATSAPP_API_KEY
 }
 
-# Отправка сообщения в WhatsApp
-def send_whatsapp_message(recipient_phone, message_text):
+# Простейшее хранилище состояний (вместо базы)
+USER_STATES = {}
+
+# AIDA промпт
+BASE_PROMPT = (
+    "Ты эксперт по улучшению зрения. Следуй модели AIDA:\n"
+    "1. Attention: заинтересуй пользователя (зрение ухудшается после 35 лет).\n"
+    "2. Interest: расскажи про Healvix (черника, лютеин, таурин).\n"
+    "3. Desire: объясни, почему безопасно, нет побочек, можно с лекарствами.\n"
+    "4. Action: мягко предложи купить или узнать подробнее.\n"
+    "Работай и на русском и на казахском, определяя язык по сообщению пользователя.\n"
+    "Работай с возражениями. Не будь навязчивым, но веди к покупке.\n"
+)
+
+def send_whatsapp_message(phone, message):
     payload = {
         "messaging_product": "whatsapp",
-        "to": recipient_phone,
+        "to": phone,
         "type": "text",
-        "text": {
-            "body": message_text
-        }
+        "text": {"body": message}
     }
     response = requests.post(WHATSAPP_API_URL, headers=HEADERS, json=payload)
     print(f"📤 Ответ от сервера: {response.status_code} {response.text}")
     return response
 
-# Получение ответа от ChatGPT
-def get_gpt_response(user_message):
+def get_gpt_response(user_msg, user_phone):
     try:
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "Ты эксперт по улучшению зрения. Ты помогаешь людям после неудачного звонка узнать о натуральном средстве Healvix, которое восстанавливает зрение. Продукт безопасен, без побочек, подходит людям 35+. В основе — экстракт черники, лютеин, таурин. Можно принимать с любыми лекарствами. Не вызывает зависимости."},
-                {"role": "user", "content": user_message}
+                {"role": "system", "content": BASE_PROMPT},
+                {"role": "user", "content": user_msg}
             ],
             temperature=0.7
         )
         reply = response.choices[0].message.content.strip()
+        
+        # Обновим состояние диалога
+        USER_STATES[user_phone] = {"last_message": user_msg}
+        
         return reply
     except Exception as e:
         print(f"❌ GPT ошибка: {e}")
-        return "Произошла ошибка. Попробуйте позже."
+        return "Извините, произошла ошибка. Повторите позже."
 
-# Вебхук для приёма сообщений от WhatsApp
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
@@ -57,24 +67,30 @@ def webhook():
     try:
         messages = data["entry"][0]["changes"][0]["value"].get("messages")
         if messages:
-            user_message = messages[0]["text"]["body"]
-            user_phone = messages[0]["from"]
+            message = messages[0]
+            user_msg = message["text"]["body"]
+            user_phone = message["from"]
 
-            print(f"💬 Получено сообщение от {user_phone}: {user_message}")
-            print(f"🚀 Обрабатываю сообщение от {user_phone}: {user_message}")
+            print(f"💬 Получено сообщение от {user_phone}: {user_msg}")
 
-            gpt_reply = get_gpt_response(user_message)
-            send_whatsapp_message(user_phone, gpt_reply)
+            # Проверка — если сообщение такое же, не отвечаем снова
+            if USER_STATES.get(user_phone, {}).get("last_message") == user_msg:
+                print("⚠️ Повторное сообщение, пропускаем.")
+                return jsonify({"status": "duplicate"}), 200
+
+            reply = get_gpt_response(user_msg, user_phone)
+            send_whatsapp_message(user_phone, reply)
+
+            # TODO: сюда можно вставить интеграцию с CRM webhook
+
     except Exception as e:
         print(f"❌ Ошибка обработки входящего запроса: {e}")
 
     return jsonify({"status": "ok"}), 200
 
-# Проверка доступности сервера
 @app.route('/', methods=['GET'])
 def home():
-    return "Бот запущен!", 200
+    return "Бот Healvix активен!", 200
 
-# Для запуска в Render
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
