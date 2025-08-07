@@ -2,7 +2,7 @@ import os
 import requests
 from flask import Flask, request, jsonify
 from openai import OpenAI
-from fsm_healvix_kz import router
+import fsm_healvix_kz  # <-- тут теперь правильный импорт
 
 app = Flask(__name__)
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
