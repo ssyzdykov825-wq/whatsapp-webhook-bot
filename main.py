@@ -2,11 +2,12 @@ import os
 import requests
 from flask import Flask, request, jsonify
 from openai import OpenAI
-import fsm_healvix_kz  # <-- тут теперь правильный импорт
 
+# Инициализация Flask и OpenAI клиента
 app = Flask(__name__)
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
+# Настройки 360dialog
 WHATSAPP_API_URL = "https://waba-v2.360dialog.io/messages"
 WHATSAPP_API_KEY = os.environ.get("WHATSAPP_API_KEY")
 
@@ -15,60 +16,57 @@ HEADERS = {
     "D360-API-KEY": WHATSAPP_API_KEY
 }
 
-# Общее хранилище состояний
-USER_STATES = fsm_healvix_kz.USER_STATES
-
-# Базовый system-промпт
-BASE_PROMPT = """
-Ты — опытный консультант по продукту Healvix — натуральному средству для восстановления зрения.
-"""
-
-def send_whatsapp_message(phone, message):
+# Отправка сообщения в WhatsApp
+def send_whatsapp_message(recipient_phone, message_text):
     payload = {
         "messaging_product": "whatsapp",
-        "to": phone,
+        "to": recipient_phone,
         "type": "text",
-        "text": {"body": message}
+        "text": {
+            "body": message_text
+        }
     }
     response = requests.post(WHATSAPP_API_URL, headers=HEADERS, json=payload)
     print(f"📤 Ответ от сервера: {response.status_code} {response.text}")
     return response
 
-def get_gpt_response(user_msg, user_phone):
+# Получение ответа от ChatGPT по скрипту продаж
+def get_gpt_response(user_message):
     try:
-        history = USER_STATES.get(user_phone, {}).get("history", [])
+        system_prompt = """
+Сен — Healvix компаниясының сыпайы және сенімді онлайн кеңесшісісің. Сенің мақсатың — клиентке көруді қалпына келтіруге көмектесетін табиғи өнім Healvix туралы түсіндіріп, сатып алуға бағыттау.
 
-        messages = [{"role": "system", "content": BASE_PROMPT}]
-        for h in history:
-            messages.append({"role": "user", "content": h["user"]})
-            messages.append({"role": "assistant", "content": h["bot"]})
-        messages.append({"role": "user", "content": user_msg})
+Байланыс скрипті мынадай құрылымда:
+
+1. Сәлемдесу: «Сәлеметсіз бе, Менің есімім Айдос. Healvix компаниясынан. Сіз өтінім қалдырған едіңіз — 1-2 минут сөйлесуге ыңғайлы ма?»
+2. Көру мәселесін нақтылау: «Бұл өзіңіз үшін бе, әлде туыстарыңыз үшін бе? Қандай белгілер мазалайды — көз шаршауы, бұлдыр көру, әлсіздік?»
+3. Қауіп туралы ескерту: «Көп адам алғашқы белгілерге мән бермей, кейін көзілдірік немесе операция қажет болады. Ал көз — тіс емес, оны қалпына келтіру қиын.»
+4. Healvix шешімі: «Healvix құрамында черника, лютеин, В дәрумендері бар. Көзді қоректендіріп, көруді жақсартады. Клиенттеріміз 2 аптада оң нәтиже көреді.»
+5. Тапсырысқа бағыттау: «Қазір сізге жеңілдік қарастырылған. Жеткізу тегін, төлем — тек алған кезде. Бір қаптамамен бастаймыз ба, әлде толық курс аламыз ба?»
+6. Қарсылықтармен жұмыс: «Ойланам десеңіз — түсінеміз, бірақ алдын алу — оңай әрі арзан. Healvix — қауіпсіз, жанама әсері жоқ.»
+7. Аяқтау: «Онда тапсырысты рәсімдейік. Тек аты-жөніңізді, мекенжай мен байланыс нөміріңізді жіберсеңіз болды.»
+
+⚠️ Маңызды: 
+— Егер клиент сұрақ қойса ("Бағасы қандай?", "Құрамы?", "Көмектесе ме?"), нақты жауап бер, бірақ қысым жасама.  
+— Сөйлесу жылы, сенімді, бірақ мақсатты болсын.  
+— Жауаптар тым ұзақ болмасын.  
+— Скриптке сүйен, бірақ жауапты әр клиентке бейімде.
+"""
 
         response = client.chat.completions.create(
             model="gpt-4o",
-            messages=messages,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message}
+            ],
             temperature=0.7
         )
-        reply = response.choices[0].message.content.strip()
-
-        # Обновляем историю
-        USER_STATES[user_phone] = {
-            **USER_STATES.get(user_phone, {}),
-            "last_message": user_msg,
-            "history": history[-4:] + [{"user": user_msg, "bot": reply}]
-        }
-
-        return reply
+        return response.choices[0].message.content.strip()
     except Exception as e:
-        print(f"❌ GPT ошибка: {e}")
-        return "Қателік орын алды / Произошла ошибка. Повторите позже."
+        print(f"❌ GPT қатесі: {e}")
+        return "Кешіріңіз, уақытша жауап бере алмаймын. Кейінірек қайта көріңіз."
 
-# Простая проверка на приветствие
-def is_greeting(text):
-    text = text.lower()
-    greetings = ["сәлем", "привет", "здравствуйте", "салам", "добрый день", "добрый вечер", "hi", "hello"]
-    return any(greet in text for greet in greetings)
-
+# Вебхук
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
@@ -77,38 +75,20 @@ def webhook():
     try:
         messages = data["entry"][0]["changes"][0]["value"].get("messages")
         if messages:
-            msg = messages[0]
-            user_msg = msg["text"]["body"]
-            user_phone = msg["from"]
+            user_message = messages[0]["text"]["body"]
+            user_phone = messages[0]["from"]
 
-            print(f"💬 От {user_phone}: {user_msg}")
-
-            if USER_STATES.get(user_phone, {}).get("last_message") == user_msg:
-                print("⚠️ Повтор — пропускаем")
-                return jsonify({"status": "duplicate"}), 200
-
-            # FSM если приветствие или уже в FSM
-            user_data = USER_STATES.get(user_phone, {})
-            if is_greeting(user_msg) or user_data.get("step"):
-                if not user_data.get("step"):
-                    fsm_healvix_kz.init_state(user_phone)
-                reply = fsm_healvix_kz.process_fsm(user_phone, user_msg)
-                USER_STATES[user_phone]["last_message"] = user_msg
-                send_whatsapp_message(user_phone, reply)
-
-            else:
-                # GPT
-                reply = get_gpt_response(user_msg, user_phone)
-                send_whatsapp_message(user_phone, reply)
-
+            print(f"💬 Хабарлама {user_phone} нөмірінен: {user_message}")
+            gpt_reply = get_gpt_response(user_message)
+            send_whatsapp_message(user_phone, gpt_reply)
     except Exception as e:
-        print(f"❌ Ошибка обработки запроса: {e}")
+        print(f"❌ Вебхук қатесі: {e}")
 
     return jsonify({"status": "ok"}), 200
 
 @app.route('/', methods=['GET'])
 def home():
-    return "Healvix бот активен!", 200
+    return "Бот іске қосылды!", 200
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
