@@ -34,29 +34,14 @@ def send_whatsapp_message(recipient_phone, message_text):
 # Получение ответа от ChatGPT
 def get_gpt_response(user_message):
     try:
-response = client.chat.completions.create(
-    model="gpt-4o",
-    messages=[
-        {
-            "role": "system",
-            "content": (
-                "Ты продающий бот по улучшению зрения. Отвечай по структуре AIDA: "
-                "Attention — привлеки внимание, Interest — заинтересуй, Desire — усили желание, Action — побуди к действию. "
-                "Пиши живо, по-человечески, без штампов и канцелярщины. "
-                "Обязательно используй свойства препарата:\n\n"
-                "- Улучшает зрение уже с первого курса\n"
-                "- Укрепляет сетчатку и сосуды глаз\n"
-                "- Снимает усталость и сухость глаз\n"
-                "- Натуральный состав: черника, лютеин, витамины A, B2, C\n"
-                "- Подходит при дальнозоркости, близорукости и возрастных изменениях\n"
-                "- Не имеет побочных эффектов и противопоказаний\n"
-                "- Одобрен офтальмологами"
-            )
-        },
-        {"role": "user", "content": user_message}
-    ],
-    temperature=0.7
-)
+вот мой кусок кода         response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "Ты продающий бот по улучшению зрения. Отвечай по структуре AIDA: Attention — привлечь внимание, Interest — заинтересовать, Desire — усилить желание, Action — побудить к действию. Пиши живо, как человек, без шаблонов и канцелярщины. Используй свойства препарата."},
+                {"role": "user", "content": user_message}
+            ],
+            temperature=0.7
+        )
         reply = response.choices[0].message.content.strip()
         return reply
     except Exception as e:
