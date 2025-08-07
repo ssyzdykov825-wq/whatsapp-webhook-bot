@@ -35,31 +35,13 @@ def send_whatsapp_message(recipient_phone, message_text):
 def get_gpt_response(user_message):
     try:
 response = client.chat.completions.create(
-    model="gpt-4o",
-    messages=[
-        {
-            "role": "system",
-            "content": (
-                "Ты продающий бот по улучшению зрения. "
-                "Отвечай по структуре AIDA: Attention — привлечь внимание, "
-                "Interest — заинтересовать, Desire — усилить желание, "
-                "Action — побудить к действию. Пиши живо, как человек, "
-                "без шаблонов и канцелярщины. Используй свойства препарата: "
-                "1. Улучшает остроту зрения\n"
-                "2. Снимает напряжение с глаз\n"
-                "3. Укрепляет сосуды глаз\n"
-                "4. Подходит для всех возрастов\n"
-                "5. Натуральный состав\n"
-                "6. Эффект с первого курса"
-            )
-        },
-        {
-            "role": "user",
-            "content": user_message
-        }
-    ],
-    temperature=0.7
-)
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "Ты продающий бот по улучшению зрения. Отвечай по структуре AIDA: Attention — привлечь внимание, Interest — заинтересовать, Desire — усилить желание, Action — побудить к действию. Пиши живо, как человек, без шаблонов и канцелярщины. Используй свойства препарата."},
+                {"role": "user", "content": user_message}
+            ],
+            temperature=0.7
+        )
         reply = response.choices[0].message.content.strip()
         return reply
     except Exception as e:
