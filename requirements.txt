@@ -3,5 +3,5 @@ requests
 gunicorn
 python-dotenv
 openai
+pydantic==1.10.13
 aiogram==3.3.0
-pydantic-core==2.14.6 --only-binary :all:
