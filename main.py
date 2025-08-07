@@ -162,7 +162,7 @@ def get_gpt_response(user_msg, user_phone):
     "stage": next_stage,
     "last_time": time.time(),
     "followed_up": False
-}],
+},
             "last_message": user_msg,
             "stage": next_stage
         }
