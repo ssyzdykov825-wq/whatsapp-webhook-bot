@@ -21,8 +21,6 @@ USER_STATES = fsm_healvix_kz.USER_STATES
 # Базовый system-промпт
 BASE_PROMPT = """
 Ты — опытный консультант по продукту Healvix — натуральному средству для восстановления зрения.
-
-... (оставь здесь свой текст AIDA как раньше)
 """
 
 def send_whatsapp_message(phone, message):
