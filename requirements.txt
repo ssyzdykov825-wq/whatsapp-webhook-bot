@@ -4,4 +4,4 @@ gunicorn
 python-dotenv
 openai
 pydantic==1.10.13
-aiogram==3.3.0
+aiogram==3.0.0b7
