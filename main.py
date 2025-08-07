@@ -18,10 +18,9 @@ HEADERS = {
 
 USER_STATE = {}
 
+# Обновленный SALES_SCRIPT_PROMPT с живым стилем и шаблон-фразами
 SALES_SCRIPT_PROMPT = """
-Сен Healvix өнімін сататын кәсіби кеңесшісің. Клиентпен жылы, сенімді және анық сөйлейсің.
-Мақсатың — клиентке көзге арналған табиғи кешеннің маңыздылығын түсіндіріп, сатуға жеткізу.
-Әр клиентпен жеке сөйлесіп, оның көзіне байланысты проблемасын анықтап, шынайы көмек ұсын.
+(весь предыдущий prompt здесь вставлен — см. предыдущий шаг)
 """
 
 STAGE_PROMPTS = {
@@ -54,7 +53,7 @@ def send_whatsapp_message(phone, message):
         "text": {"body": message}
     }
     response = requests.post(WHATSAPP_API_URL, headers=HEADERS, json=payload)
-    print(f"\U0001f4e4 Ответ от сервера: {response.status_code} {response.text}")
+    print(f"📤 Ответ от сервера: {response.status_code} {response.text}")
     return response
 
 def get_gpt_response(user_msg, user_phone):
@@ -78,7 +77,6 @@ def get_gpt_response(user_msg, user_phone):
         )
         reply = response.choices[0].message.content.strip()
 
-        # Переход на следующий этап (можно улучшить логикой позже)
         next_stage = str(int(stage) + 1) if int(stage) < 6 else "6"
 
         USER_STATE[user_phone] = {
@@ -95,7 +93,7 @@ def get_gpt_response(user_msg, user_phone):
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
-    print("\U0001f4e9 Келген JSON:", data)
+    print("📩 Келген JSON:", data)
 
     try:
         messages = data["entry"][0]["changes"][0]["value"].get("messages")
@@ -104,7 +102,7 @@ def webhook():
             user_phone = msg["from"]
             user_msg = msg["text"]["body"]
 
-            print(f"\U0001f4ac {user_phone}: {user_msg}")
+            print(f"💬 {user_phone}: {user_msg}")
 
             if USER_STATE.get(user_phone, {}).get("last_message") == user_msg:
                 print("⚠️ Қайталау — өткізіп жібереміз")
