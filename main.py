@@ -258,24 +258,11 @@ def webhook():
 def home():
     return "Healvix бот іске қосылды!", 200
 
-def normalize_phone(phone):
-    """Приводит номер к формату +7XXXXXXXXXX. Возвращает None, если номер нельзя нормализовать."""
-    if not phone:
-        return None
-    digits = ''.join(filter(str.isdigit, phone))
-    # Простой валидный кейс: 11 цифр (начинается с 7 или 8) или 10 цифр (без кода)
-    if len(digits) == 11:
-        if digits.startswith('8'):
-            digits = '7' + digits[1:]
-        # теперь digits начинается с '7'
-        if digits.startswith('7'):
-            return f"+{digits}"
-    elif len(digits) == 10:
-        # добавляем код страны 7 (Казахстан/Россия по твоему сценарию)
-        return f"+7{digits}"
-    # Иные форматы — считаем некорректными
-    return None
+from datetime import datetime, timedelta
+import threading
 
+# Хранилище для защиты от повторов
+last_sent = {}
 
 def process_salesrender_order(order):
     try:
@@ -283,6 +270,18 @@ def process_salesrender_order(order):
         first_name = order.get("customer", {}).get("name", {}).get("firstName", "").strip()
         last_name = order.get("customer", {}).get("name", {}).get("lastName", "").strip()
         name = f"{first_name} {last_name}".strip()
+
+        # Достаём телефон
+        phone = order.get("customer", {}).get("phone", {}).get("raw", "").strip()
+        if not phone:
+            print("❌ Телефон не указан — пропуск")
+            return
+
+        # Проверка на повтор в течение 6 часов
+        now = datetime.utcnow()
+        if phone in last_sent and now - last_sent[phone] < timedelta(hours=6):
+            print(f"⚠️ Повторный недозвон по {phone} — пропускаем")
+            return
 
         # Достаём и нормализуем телефон
         raw_phone = order.get("customer", {}).get("phone", {}).get("raw", "").strip()
