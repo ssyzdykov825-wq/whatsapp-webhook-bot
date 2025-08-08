@@ -8,24 +8,6 @@ from openai import OpenAI
 app = Flask(__name__)
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-# === Твой Verify Token для WhatsApp Cloud API ===
-MY_WHATSAPP_VERIFY = "dos077"
-
-@app.route("/webhook", methods=["GET", "POST"])
-def webhook():
-    if request.method == "GET":
-        verify_token = request.args.get("hub.verify_token")
-        challenge = request.args.get("hub.challenge")
-        if verify_token == MY_WHATSAPP_VERIFY:
-            return challenge, 200
-        return "Ошибка: неверный токен", 403
-
-    if request.method == "POST":
-        data = request.get_json()
-        print("📩 Входящее сообщение:", data)
-        # Тут можешь вставить свой код обработки входящих сообщений
-        return "OK", 200
-
 WHATSAPP_API_URL = "https://waba-v2.360dialog.io/messages"
 WHATSAPP_API_KEY = os.environ.get("WHATSAPP_API_KEY")
 
