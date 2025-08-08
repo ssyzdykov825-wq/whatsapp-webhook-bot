@@ -225,69 +225,47 @@ def start_followup_thread():
         thread.start()
         print("🟢 follow-up checker запущен")
 
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    data = request.get_json()
-    print("📩 Келген JSON:", data)
-
-    try:
-        messages = data["entry"][0]["changes"][0]["value"].get("messages")
-        if messages:
-            msg = messages[0]
-            user_phone = msg["from"]
-            user_msg = msg["text"]["body"]
-
-            print(f"💬 {user_phone}: {user_msg}")
-
-            start_followup_thread()
-
-            if USER_STATE.get(user_phone, {}).get("last_message") == user_msg:
-                print("⚠️ Қайталау — өткізіп жібереміз")
-                return jsonify({"status": "duplicate"}), 200
-
-            reply = get_gpt_response(user_msg, user_phone)
-            for part in split_message(reply):
-                send_whatsapp_message(user_phone, part)
-
-    except Exception as e:
-        print(f"❌ Обработка қатесі: {e}")
-
-    return jsonify({"status": "ok"}), 200
-
-@app.route('/', methods=['GET'])
-def home():
-    return "Healvix бот іске қосылды!", 200
-
-import threading
-from flask import Flask, request, jsonify
 from datetime import datetime, timedelta
+import threading
+from flask import request, jsonify
 
-app = Flask(__name__)
+# Хранилище для защиты от повторов
 last_sent = {}
 
 def process_salesrender(data):
-    """Фоновая обработка CRM-хука"""
+    """Вынесенная обработка CRM-хука, чтобы не блокировать Flask."""
+    global last_sent
     try:
+        # Получаем первый заказ
         orders = (
             data.get("data", {}).get("orders")
             or data.get("orders")
             or []
         )
         if not orders:
+            print("❌ Нет заказов в ответе CRM")
             return
 
         order = orders[0]
+
+        # Достаём имя
         first_name = order.get("customer", {}).get("name", {}).get("firstName", "").strip()
         last_name = order.get("customer", {}).get("name", {}).get("lastName", "").strip()
         name = f"{first_name} {last_name}".strip()
-        phone = order.get("customer", {}).get("phone", {}).get("raw", "").strip()
 
+        # Достаём телефон
+        phone = order.get("customer", {}).get("phone", {}).get("raw", "").strip()
+        if not phone:
+            print("❌ Телефон не указан")
+            return
+
+        # Проверка на повтор в течение 6 часов
         now = datetime.utcnow()
         if phone in last_sent and now - last_sent[phone] < timedelta(hours=6):
             print(f"⚠️ Повторный недозвон по {phone} — пропускаем")
             return
 
-        # Определяем приветствие
+        # Определяем время суток (Казахстан UTC+6)
         now_kz = now + timedelta(hours=6)
         hour = now_kz.hour
         if 5 <= hour < 12:
@@ -297,12 +275,22 @@ def process_salesrender(data):
         else:
             greeting = "Қайырлы кеш"
 
-        # GPT-запрос
+        # Формируем запрос в GPT
         try:
             if name:
-                prompt = f"{greeting}! Клиенттің аты {name}. Оған қоңырау шалдық, бірақ байланыс болмады..."
+                prompt = (
+                    f"{greeting}! Клиенттің аты {name}. "
+                    f"Оған қоңырау шалдық, бірақ байланыс болмады. "
+                    f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
+                    f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз."
+                )
             else:
-                prompt = f"{greeting}! Біз клиентке қоңырау шалдық, бірақ байланыс болмады..."
+                prompt = (
+                    f"{greeting}! Біз клиентке қоңырау шалдық, бірақ байланыс болмады. "
+                    f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
+                    f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз. "
+                    f"Есімін қолданбаңыз."
+                )
 
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
@@ -310,25 +298,36 @@ def process_salesrender(data):
                 temperature=0.7
             )
             message_text = response.choices[0].message.content.strip()
+
         except Exception as e:
             print(f"❌ GPT қатесі: {e}")
-            message_text = f"{greeting}! Біз сізге қоңырау шалдық..."
+            if name:
+                message_text = f"{greeting}! {name}, біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
+            else:
+                message_text = f"{greeting}! Біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
 
         # Отправка в WhatsApp
         send_whatsapp_message(phone, message_text)
+
+        # Запоминаем время отправки
         last_sent[phone] = now
+
+        print(f"✅ Сообщение отправлено {phone}: {message_text}")
+
     except Exception as e:
         print(f"❌ Ошибка обработки CRM-хука: {e}")
 
+
 @app.route('/salesrender-hook', methods=['POST'])
 def salesrender_hook():
-    """Принимаем вебхук от CRM"""
-    data = request.get_json(force=True)
+    print("=== Входящий запрос в /salesrender-hook ===")
+    print("Headers:", dict(request.headers))
+    print("Body:", request.data.decode("utf-8"))
 
-    # Запускаем в отдельном потоке, чтобы не блокировать ответ
+    data = request.get_json(force=True, silent=True) or {}
+    # Запускаем обработку в отдельном потоке
     threading.Thread(target=process_salesrender, args=(data,)).start()
-
-    # Сразу отвечаем, чтобы CRM/360dialog не ждали
+    # Мгновенно возвращаем 200, чтобы не блокировать
     return jsonify({"status": "accepted"}), 200
 
 if __name__ == "__main__":
