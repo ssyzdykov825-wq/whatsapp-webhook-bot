@@ -263,9 +263,12 @@ def follow_up_checker():
                 USER_STATE[phone]["followed_up"] = True
         time.sleep(30)
 
-@app.before_first_request
-def start_background_threads():
-    # followup
+@app.before_request
+def init():
+    if not hasattr(app, "_initialized"):
+        app._initialized = True
+        # твоя инициализация
+    
     if not getattr(app, "followup_started", False):
         app.followup_started = True
         t = threading.Thread(target=follow_up_checker, daemon=True)
