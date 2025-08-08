@@ -225,5 +225,38 @@ def start_followup_thread():
         thread.start()
         print("🟢 follow-up checker запущен")
 
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    data = request.get_json()
+    print("📩 Келген JSON:", data)
+
+    try:
+        messages = data["entry"][0]["changes"][0]["value"].get("messages")
+        if messages:
+            msg = messages[0]
+            user_phone = msg["from"]
+            user_msg = msg["text"]["body"]
+
+            print(f"💬 {user_phone}: {user_msg}")
+
+            start_followup_thread()
+
+            if USER_STATE.get(user_phone, {}).get("last_message") == user_msg:
+                print("⚠️ Қайталау — өткізіп жібереміз")
+                return jsonify({"status": "duplicate"}), 200
+
+            reply = get_gpt_response(user_msg, user_phone)
+            for part in split_message(reply):
+                send_whatsapp_message(user_phone, part)
+
+    except Exception as e:
+        print(f"❌ Обработка қатесі: {e}")
+
+    return jsonify({"status": "ok"}), 200
+
+@app.route('/', methods=['GET'])
+def home():
+    return "Healvix бот іске қосылды!", 200
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
