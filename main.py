@@ -336,6 +336,7 @@ def process_salesrender_order(order):
         last_sent[phone] = now
 
         print(f"✅ Сообщение для {phone} отправлено")
+
     except Exception as e:
         print(f"❌ Ошибка обработки заказа: {e}")
 
