@@ -233,19 +233,25 @@ last_sent = {}
 @app.route('/salesrender-hook', methods=['POST'])
 def salesrender_hook():
     """
-    Эндпоинт для CRM SalesRender (недозвон).
-    Пример входящего JSON:
+    Эндпоинт для CRM SalesRender (недозвон) с GraphQL структурой:
     {
-      "customer": {
-        "name": {
-          "firstName": "Иван",
-          "lastName": "Петров"
-        },
-        "phone": {
-          "raw": "77001234567",
-          "international": "+7 700 123 4567",
-          "national": "8 (700) 123-45-67"
-        }
+      "data": {
+        "orders": [
+          {
+            "id": "123",
+            "customer": {
+              "name": {
+                "firstName": "Иван",
+                "lastName": "Петров"
+              },
+              "phone": {
+                "raw": "77001234567",
+                "international": "+7 700 123 4567",
+                "national": "8 (700) 123-45-67"
+              }
+            }
+          }
+        ]
       }
     }
     """
@@ -257,13 +263,24 @@ def salesrender_hook():
     try:
         data = request.get_json()
 
+        # Получаем первый заказ
+        orders = (
+            data.get("data", {}).get("orders")
+            or data.get("orders")
+            or []
+        )
+        if not orders:
+            return jsonify({"error": "Нет заказов в ответе"}), 400
+
+        order = orders[0]
+
         # Достаём имя
-        first_name = data.get("customer", {}).get("name", {}).get("firstName", "").strip()
-        last_name = data.get("customer", {}).get("name", {}).get("lastName", "").strip()
+        first_name = order.get("customer", {}).get("name", {}).get("firstName", "").strip()
+        last_name = order.get("customer", {}).get("name", {}).get("lastName", "").strip()
         name = f"{first_name} {last_name}".strip()
 
         # Достаём телефон
-        phone = data.get("customer", {}).get("phone", {}).get("raw", "").strip()
+        phone = order.get("customer", {}).get("phone", {}).get("raw", "").strip()
 
         if not phone:
             return jsonify({"error": "Телефон не указан"}), 400
