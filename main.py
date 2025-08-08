@@ -258,5 +258,78 @@ def webhook():
 def home():
     return "Healvix бот іске қосылды!", 200
 
+import threading
+from flask import Flask, request, jsonify
+from datetime import datetime, timedelta
+
+app = Flask(__name__)
+last_sent = {}
+
+def process_salesrender(data):
+    """Фоновая обработка CRM-хука"""
+    try:
+        orders = (
+            data.get("data", {}).get("orders")
+            or data.get("orders")
+            or []
+        )
+        if not orders:
+            return
+
+        order = orders[0]
+        first_name = order.get("customer", {}).get("name", {}).get("firstName", "").strip()
+        last_name = order.get("customer", {}).get("name", {}).get("lastName", "").strip()
+        name = f"{first_name} {last_name}".strip()
+        phone = order.get("customer", {}).get("phone", {}).get("raw", "").strip()
+
+        now = datetime.utcnow()
+        if phone in last_sent and now - last_sent[phone] < timedelta(hours=6):
+            print(f"⚠️ Повторный недозвон по {phone} — пропускаем")
+            return
+
+        # Определяем приветствие
+        now_kz = now + timedelta(hours=6)
+        hour = now_kz.hour
+        if 5 <= hour < 12:
+            greeting = "Қайырлы таң"
+        elif 12 <= hour < 18:
+            greeting = "Сәлеметсіз бе"
+        else:
+            greeting = "Қайырлы кеш"
+
+        # GPT-запрос
+        try:
+            if name:
+                prompt = f"{greeting}! Клиенттің аты {name}. Оған қоңырау шалдық, бірақ байланыс болмады..."
+            else:
+                prompt = f"{greeting}! Біз клиентке қоңырау шалдық, бірақ байланыс болмады..."
+
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7
+            )
+            message_text = response.choices[0].message.content.strip()
+        except Exception as e:
+            print(f"❌ GPT қатесі: {e}")
+            message_text = f"{greeting}! Біз сізге қоңырау шалдық..."
+
+        # Отправка в WhatsApp
+        send_whatsapp_message(phone, message_text)
+        last_sent[phone] = now
+    except Exception as e:
+        print(f"❌ Ошибка обработки CRM-хука: {e}")
+
+@app.route('/salesrender-hook', methods=['POST'])
+def salesrender_hook():
+    """Принимаем вебхук от CRM"""
+    data = request.get_json(force=True)
+
+    # Запускаем в отдельном потоке, чтобы не блокировать ответ
+    threading.Thread(target=process_salesrender, args=(data,)).start()
+
+    # Сразу отвечаем, чтобы CRM/360dialog не ждали
+    return jsonify({"status": "accepted"}), 200
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
