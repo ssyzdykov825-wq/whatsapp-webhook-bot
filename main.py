@@ -273,5 +273,5 @@ def start_background_threads():
         log.info("Started followup checker")
 
 if __name__ == "__main__":
-    log.info("Starting app on port %s", PORT)
-    app.run(host="0.0.0.0", port=PORT)
+    threading.Thread(target=твоя_функция, daemon=True).start()
+    app.run(host="0.0.0.0", port=5000)
