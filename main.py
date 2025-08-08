@@ -362,7 +362,7 @@ def salesrender_hook():
 
     except Exception as e:
         print(f"❌ Ошибка обработки CRM-хука: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(e)}), 200
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
