@@ -258,15 +258,11 @@ def webhook():
 def home():
     return "Healvix бот іске қосылды!", 200
 
-def normalize_phone(phone):
-    """Приводит номер к формату +7XXXXXXXXXX"""
-    digits = ''.join(filter(str.isdigit, phone))
-    if digits.startswith('8') and len(digits) == 11:
-        digits = '7' + digits[1:]
-    if not digits.startswith('7') and len(digits) == 10:
-        digits = '7' + digits
-    return f"+{digits}" if digits else None
+from datetime import datetime, timedelta
+import threading
 
+# Хранилище для защиты от повторов
+last_sent = {}
 
 def process_salesrender_order(order):
     try:
@@ -275,11 +271,10 @@ def process_salesrender_order(order):
         last_name = order.get("customer", {}).get("name", {}).get("lastName", "").strip()
         name = f"{first_name} {last_name}".strip()
 
-        # Достаём и нормализуем телефон
-        raw_phone = order.get("customer", {}).get("phone", {}).get("raw", "").strip()
-        phone = normalize_phone(raw_phone)
+        # Достаём телефон
+        phone = order.get("customer", {}).get("phone", {}).get("raw", "").strip()
         if not phone:
-            print("❌ Телефон не указан или в неверном формате — пропуск")
+            print("❌ Телефон не указан — пропуск")
             return
 
         # Проверка на повтор в течение 6 часов
@@ -336,9 +331,35 @@ def process_salesrender_order(order):
         last_sent[phone] = now
 
         print(f"✅ Сообщение для {phone} отправлено")
-
     except Exception as e:
         print(f"❌ Ошибка обработки заказа: {e}")
+
+
+@app.route('/salesrender-hook', methods=['POST'])
+def salesrender_hook():
+    print("=== Входящий запрос в /salesrender-hook ===")
+    print("Headers:", dict(request.headers))
+    print("Body:", request.data.decode("utf-8"))
+
+    try:
+        data = request.get_json()
+
+        orders = (
+            data.get("data", {}).get("orders")
+            or data.get("orders")
+            or []
+        )
+        if not orders:
+            return jsonify({"error": "Нет заказов в ответе"}), 400
+
+        # Запускаем обработку в отдельном потоке, чтобы не блокировать Flask
+        threading.Thread(target=process_salesrender_order, args=(orders[0],), daemon=True).start()
+
+        return jsonify({"status": "accepted"}), 200
+
+    except Exception as e:
+        print(f"❌ Ошибка парсинга CRM-хука: {e}")
+        return jsonify({"error": str(e)}), 200
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
