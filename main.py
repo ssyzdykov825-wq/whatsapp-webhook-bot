@@ -270,6 +270,12 @@ def salesrender_hook():
         "phone": "77001234567"
     }
     """
+
+    # ЛОГИ ДЛЯ ПРОВЕРКИ — вставляем сюда
+    print("=== Входящий запрос в /salesrender-hook ===")
+    print("Headers:", dict(request.headers))
+    print("Body:", request.data.decode("utf-8"))
+
     data = request.get_json()
     print("📩 Недозвон из CRM:", data)
 
