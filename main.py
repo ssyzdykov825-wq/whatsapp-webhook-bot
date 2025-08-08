@@ -225,111 +225,109 @@ def start_followup_thread():
         thread.start()
         print("🟢 follow-up checker запущен")
 
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    data = request.get_json()
-    print("📩 Келген JSON:", data)
-
-    try:
-        messages = data["entry"][0]["changes"][0]["value"].get("messages")
-        if messages:
-            msg = messages[0]
-            user_phone = msg["from"]
-            user_msg = msg["text"]["body"]
-
-            print(f"💬 {user_phone}: {user_msg}")
-
-            start_followup_thread()
-
-            if USER_STATE.get(user_phone, {}).get("last_message") == user_msg:
-                print("⚠️ Қайталау — өткізіп жібереміз")
-                return jsonify({"status": "duplicate"}), 200
-
-            reply = get_gpt_response(user_msg, user_phone)
-            for part in split_message(reply):
-                send_whatsapp_message(user_phone, part)
-
-    except Exception as e:
-        print(f"❌ Обработка қатесі: {e}")
-
-    return jsonify({"status": "ok"}), 200
-
-@app.route('/', methods=['GET'])
-def home():
-    return "Healvix бот іске қосылды!", 200
-
 from datetime import datetime, timedelta
+
+# Хранилище для защиты от повторов
+last_sent = {}
 
 @app.route('/salesrender-hook', methods=['POST'])
 def salesrender_hook():
     """
     Эндпоинт для CRM SalesRender (недозвон).
-    Ожидает JSON:
+    Пример входящего JSON:
     {
-        "name": "Иван",   # может быть пустым
-        "phone": "77001234567"
+      "customer": {
+        "name": {
+          "firstName": "Иван",
+          "lastName": "Петров"
+        },
+        "phone": {
+          "raw": "77001234567",
+          "international": "+7 700 123 4567",
+          "national": "8 (700) 123-45-67"
+        }
+      }
     }
     """
 
-    # ЛОГИ ДЛЯ ПРОВЕРКИ — вставляем сюда
     print("=== Входящий запрос в /salesrender-hook ===")
     print("Headers:", dict(request.headers))
     print("Body:", request.data.decode("utf-8"))
 
-    data = request.get_json()
-    print("📩 Недозвон из CRM:", data)
-
-    name = data.get("name", "").strip()
-    phone = data.get("phone", "").strip()
-
-    if not phone:
-        return jsonify({"error": "Телефон не указан"}), 400
-
-    # Определяем время суток (Казахстан UTC+6)
-    now_kz = datetime.utcnow() + timedelta(hours=6)
-    hour = now_kz.hour
-    if 5 <= hour < 12:
-        greeting = "Қайырлы таң"
-    elif 12 <= hour < 18:
-        greeting = "Сәлеметсіз бе"
-    else:
-        greeting = "Қайырлы кеш"
-
-    # Формируем запрос в GPT
     try:
-        if name:
-            prompt = (
-                f"{greeting}! Клиенттің аты {name}. "
-                f"Оған қоңырау шалдық, бірақ байланыс болмады. "
-                f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
-                f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз."
-            )
-        else:
-            prompt = (
-                f"{greeting}! Біз клиентке қоңырау шалдық, бірақ байланыс болмады. "
-                f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
-                f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз. "
-                f"Есімін қолданбаңыз."
-            )
+        data = request.get_json()
 
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.7
-        )
-        message_text = response.choices[0].message.content.strip()
+        # Достаём имя
+        first_name = data.get("customer", {}).get("name", {}).get("firstName", "").strip()
+        last_name = data.get("customer", {}).get("name", {}).get("lastName", "").strip()
+        name = f"{first_name} {last_name}".strip()
+
+        # Достаём телефон
+        phone = data.get("customer", {}).get("phone", {}).get("raw", "").strip()
+
+        if not phone:
+            return jsonify({"error": "Телефон не указан"}), 400
+
+        # Проверка на повтор в течение 6 часов
+        now = datetime.utcnow()
+        if phone in last_sent:
+            last_time = last_sent[phone]
+            if now - last_time < timedelta(hours=6):
+                print(f"⚠️ Повторный недозвон по {phone} — пропускаем")
+                return jsonify({"status": "duplicate"}), 200
+
+        # Определяем время суток (Казахстан UTC+6)
+        now_kz = now + timedelta(hours=6)
+        hour = now_kz.hour
+        if 5 <= hour < 12:
+            greeting = "Қайырлы таң"
+        elif 12 <= hour < 18:
+            greeting = "Сәлеметсіз бе"
+        else:
+            greeting = "Қайырлы кеш"
+
+        # Формируем запрос в GPT
+        try:
+            if name:
+                prompt = (
+                    f"{greeting}! Клиенттің аты {name}. "
+                    f"Оған қоңырау шалдық, бірақ байланыс болмады. "
+                    f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
+                    f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз."
+                )
+            else:
+                prompt = (
+                    f"{greeting}! Біз клиентке қоңырау шалдық, бірақ байланыс болмады. "
+                    f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
+                    f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз. "
+                    f"Есімін қолданбаңыз."
+                )
+
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7
+            )
+            message_text = response.choices[0].message.content.strip()
+
+        except Exception as e:
+            print(f"❌ GPT қатесі: {e}")
+            if name:
+                message_text = f"{greeting}! {name}, біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
+            else:
+                message_text = f"{greeting}! Біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
+
+        # Отправка в WhatsApp
+        send_whatsapp_message(phone, message_text)
+
+        # Запоминаем время отправки
+        last_sent[phone] = now
+
+        return jsonify({"status": "ok", "sent_message": message_text}), 200
 
     except Exception as e:
-        print(f"❌ GPT қатесі: {e}")
-        if name:
-            message_text = f"{greeting}! {name}, біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
-        else:
-            message_text = f"{greeting}! Біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
-
-    # Отправка в WhatsApp
-    send_whatsapp_message(phone, message_text)
-
-    return jsonify({"status": "ok", "sent_message": message_text}), 200
+        print(f"❌ Ошибка обработки CRM-хука: {e}")
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
