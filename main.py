@@ -283,19 +283,6 @@ def process_salesrender_order(order):
             print(f"⚠️ Повторный недозвон по {phone} — пропускаем")
             return
 
-        # Достаём и нормализуем телефон
-        raw_phone = order.get("customer", {}).get("phone", {}).get("raw", "").strip()
-        phone = normalize_phone(raw_phone)
-        if not phone:
-            print("❌ Телефон не указан или в неверном формате — пропуск")
-            return
-
-        # Проверка на повтор в течение 6 часов (используем нормализованный номер как ключ)
-        now = datetime.utcnow()
-        if phone in last_sent and now - last_sent[phone] < timedelta(hours=6):
-            print(f"⚠️ Повторный недозвон по {phone} — пропускаем")
-            return
-
         # Определяем время суток (Казахстан UTC+6)
         now_kz = now + timedelta(hours=6)
         hour = now_kz.hour
@@ -324,7 +311,7 @@ def process_salesrender_order(order):
                 )
 
             response = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4o",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.7
             )
