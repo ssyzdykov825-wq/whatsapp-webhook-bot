@@ -258,5 +258,72 @@ def webhook():
 def home():
     return "Healvix бот іске қосылды!", 200
 
+from datetime import datetime, timedelta
+
+@app.route('/salesrender-hook', methods=['POST'])
+def salesrender_hook():
+    """
+    Эндпоинт для CRM SalesRender (недозвон).
+    Ожидает JSON:
+    {
+        "name": "Иван",   # может быть пустым
+        "phone": "77001234567"
+    }
+    """
+    data = request.get_json()
+    print("📩 Недозвон из CRM:", data)
+
+    name = data.get("name", "").strip()
+    phone = data.get("phone", "").strip()
+
+    if not phone:
+        return jsonify({"error": "Телефон не указан"}), 400
+
+    # Определяем время суток (Казахстан UTC+6)
+    now_kz = datetime.utcnow() + timedelta(hours=6)
+    hour = now_kz.hour
+    if 5 <= hour < 12:
+        greeting = "Қайырлы таң"
+    elif 12 <= hour < 18:
+        greeting = "Сәлеметсіз бе"
+    else:
+        greeting = "Қайырлы кеш"
+
+    # Формируем запрос в GPT
+    try:
+        if name:
+            prompt = (
+                f"{greeting}! Клиенттің аты {name}. "
+                f"Оған қоңырау шалдық, бірақ байланыс болмады. "
+                f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
+                f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз."
+            )
+        else:
+            prompt = (
+                f"{greeting}! Біз клиентке қоңырау шалдық, бірақ байланыс болмады. "
+                f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
+                f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз. "
+                f"Есімін қолданбаңыз."
+            )
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7
+        )
+        message_text = response.choices[0].message.content.strip()
+
+    except Exception as e:
+        print(f"❌ GPT қатесі: {e}")
+        if name:
+            message_text = f"{greeting}! {name}, біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
+        else:
+            message_text = f"{greeting}! Біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
+
+    # Отправка в WhatsApp
+    send_whatsapp_message(phone, message_text)
+
+    return jsonify({"status": "ok", "sent_message": message_text}), 200
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
