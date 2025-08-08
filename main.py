@@ -225,75 +225,36 @@ def start_followup_thread():
         thread.start()
         print("🟢 follow-up checker запущен")
 
+import threading
+from flask import Flask, request, jsonify
 from datetime import datetime, timedelta
 
-# Хранилище для защиты от повторов
+app = Flask(__name__)
 last_sent = {}
 
-@app.route('/salesrender-hook', methods=['POST'])
-def salesrender_hook():
-    """
-    Эндпоинт для CRM SalesRender (недозвон) с GraphQL структурой:
-    {
-      "data": {
-        "orders": [
-          {
-            "id": "123",
-            "customer": {
-              "name": {
-                "firstName": "Иван",
-                "lastName": "Петров"
-              },
-              "phone": {
-                "raw": "77001234567",
-                "international": "+7 700 123 4567",
-                "national": "8 (700) 123-45-67"
-              }
-            }
-          }
-        ]
-      }
-    }
-    """
-
-    print("=== Входящий запрос в /salesrender-hook ===")
-    print("Headers:", dict(request.headers))
-    print("Body:", request.data.decode("utf-8"))
-
+def process_salesrender(data):
+    """Фоновая обработка CRM-хука"""
     try:
-        data = request.get_json()
-
-        # Получаем первый заказ
         orders = (
             data.get("data", {}).get("orders")
             or data.get("orders")
             or []
         )
         if not orders:
-            return jsonify({"error": "Нет заказов в ответе"}), 400
+            return
 
         order = orders[0]
-
-        # Достаём имя
         first_name = order.get("customer", {}).get("name", {}).get("firstName", "").strip()
         last_name = order.get("customer", {}).get("name", {}).get("lastName", "").strip()
         name = f"{first_name} {last_name}".strip()
-
-        # Достаём телефон
         phone = order.get("customer", {}).get("phone", {}).get("raw", "").strip()
 
-        if not phone:
-            return jsonify({"error": "Телефон не указан"}), 400
-
-        # Проверка на повтор в течение 6 часов
         now = datetime.utcnow()
-        if phone in last_sent:
-            last_time = last_sent[phone]
-            if now - last_time < timedelta(hours=6):
-                print(f"⚠️ Повторный недозвон по {phone} — пропускаем")
-                return jsonify({"status": "duplicate"}), 200
+        if phone in last_sent and now - last_sent[phone] < timedelta(hours=6):
+            print(f"⚠️ Повторный недозвон по {phone} — пропускаем")
+            return
 
-        # Определяем время суток (Казахстан UTC+6)
+        # Определяем приветствие
         now_kz = now + timedelta(hours=6)
         hour = now_kz.hour
         if 5 <= hour < 12:
@@ -303,22 +264,12 @@ def salesrender_hook():
         else:
             greeting = "Қайырлы кеш"
 
-        # Формируем запрос в GPT
+        # GPT-запрос
         try:
             if name:
-                prompt = (
-                    f"{greeting}! Клиенттің аты {name}. "
-                    f"Оған қоңырау шалдық, бірақ байланыс болмады. "
-                    f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
-                    f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз."
-                )
+                prompt = f"{greeting}! Клиенттің аты {name}. Оған қоңырау шалдық, бірақ байланыс болмады..."
             else:
-                prompt = (
-                    f"{greeting}! Біз клиентке қоңырау шалдық, бірақ байланыс болмады. "
-                    f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
-                    f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз. "
-                    f"Есімін қолданбаңыз."
-                )
+                prompt = f"{greeting}! Біз клиентке қоңырау шалдық, бірақ байланыс болмады..."
 
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
@@ -326,25 +277,26 @@ def salesrender_hook():
                 temperature=0.7
             )
             message_text = response.choices[0].message.content.strip()
-
         except Exception as e:
             print(f"❌ GPT қатесі: {e}")
-            if name:
-                message_text = f"{greeting}! {name}, біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
-            else:
-                message_text = f"{greeting}! Біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
+            message_text = f"{greeting}! Біз сізге қоңырау шалдық..."
 
         # Отправка в WhatsApp
         send_whatsapp_message(phone, message_text)
-
-        # Запоминаем время отправки
         last_sent[phone] = now
-
-        return jsonify({"status": "ok", "sent_message": message_text}), 200
-
     except Exception as e:
         print(f"❌ Ошибка обработки CRM-хука: {e}")
-        return jsonify({"error": str(e)}), 200
+
+@app.route('/salesrender-hook', methods=['POST'])
+def salesrender_hook():
+    """Принимаем вебхук от CRM"""
+    data = request.get_json(force=True)
+
+    # Запускаем в отдельном потоке, чтобы не блокировать ответ
+    threading.Thread(target=process_salesrender, args=(data,)).start()
+
+    # Сразу отвечаем, чтобы CRM/360dialog не ждали
+    return jsonify({"status": "accepted"}), 200
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
