@@ -261,6 +261,8 @@ def home():
 from datetime import datetime, timedelta
 import threading
 
+app = Flask(__name__)
+
 # Хранилище для защиты от повторов
 last_sent = {}
 
@@ -351,6 +353,16 @@ def process_salesrender_order(order):
 
     except Exception as e:
         print(f"❌ Ошибка обработки заказа: {e}")
+
+
+@app.route("/salesrender-hook", methods=["POST"])
+def salesrender_hook():
+    try:
+        order_data = request.json
+        process_salesrender_order(order_data)
+        return jsonify({"status": "ok"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
