@@ -6,6 +6,28 @@ from flask import Flask, request, jsonify
 from openai import OpenAI
 
 app = Flask(__name__)
+
+from flask import request
+import json
+
+@app.before_request
+def log_all_requests():
+    if request.method == "POST":
+        print("\n=== 📡 Пойман POST-запрос ===")
+        print("Путь:", request.path)
+        print("Headers:", dict(request.headers))
+        try:
+            raw_body = request.data.decode("utf-8", errors="ignore")
+            print("Raw body:", raw_body)
+            try:
+                parsed = json.loads(raw_body)
+                print("📦 JSON:", json.dumps(parsed, ensure_ascii=False, indent=2))
+            except Exception:
+                print("⚠️ Не удалось распарсить JSON")
+        except Exception as e:
+            print(f"Ошибка чтения тела: {e}")
+        print("============================\n")
+
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 WHATSAPP_API_URL = "https://waba-v2.360dialog.io/messages"
