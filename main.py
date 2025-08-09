@@ -360,39 +360,22 @@ from flask import request, jsonify
 import threading
 import json
 
-@app.route('/salesrender-hook', methods=['POST'])
+@app.route("/salesrender-hook", methods=["POST"])
 def salesrender_hook():
-    print("=== Входящий запрос в /salesrender-hook ===")
-    print("Headers:", dict(request.headers))
-    
-    raw_body = request.data.decode("utf-8", errors="ignore")
-    print("📩 Сырой Body:", raw_body)
-
-    # Лог в файл (Render позволяет писать в /tmp)
-    with open("/tmp/salesrender_log.txt", "a", encoding="utf-8") as f:
-        f.write(f"\n=== {datetime.utcnow()} UTC ===\n")
-        f.write("Headers: " + str(dict(request.headers)) + "\n")
-        f.write("Body: " + raw_body + "\n")
-
     try:
         data = request.get_json(force=True)
-        print("📦 JSON:", data)
-
-        orders = (
-            data.get("data", {}).get("orders")
-            or data.get("orders")
-            or []
-        )
-        if not orders:
-            print("❌ Нет заказов в JSON")
-            return jsonify({"error": "Нет заказов в ответе"}), 400
-
-        threading.Thread(target=process_salesrender_order, args=(orders[0],), daemon=True).start()
-        return jsonify({"status": "accepted"}), 200
-
+        
+        # Логируем в консоль (Render пишет это в логи)
+        print("===== WEBHOOK DATA =====", file=sys.stdout)
+        print(json.dumps(data, indent=2, ensure_ascii=False), file=sys.stdout)
+        print("========================", file=sys.stdout)
+        
+        # Можно сразу вернуть 200
+        return jsonify({"status": "ok"}), 200
+    
     except Exception as e:
-        print(f"❌ Ошибка парсинга CRM-хука: {e}")
-        return jsonify({"error": str(e)}), 200
+        print(f"Error: {e}", file=sys.stderr)
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
