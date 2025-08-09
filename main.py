@@ -362,65 +362,43 @@ import json
 
 @app.route('/salesrender-hook', methods=['POST'])
 def salesrender_hook():
-    print("=== 📩 Входящий запрос в /salesrender-hook ===")
+    print("=== Входящий запрос в /salesrender-hook ===")
     print("Headers:", dict(request.headers))
 
-    # Пытаемся понять, что прислал CRM
-    raw_body = request.data.decode("utf-8", errors="ignore")
-    print("Raw body:", raw_body)
+    raw_body = request.data.decode("utf-8")
+    print("📩 Сырой Body:", raw_body)
 
-    # Пробуем распарсить как JSON
     try:
-        data = request.get_json(force=True, silent=True)
-    except Exception as e:
-        print(f"❌ Ошибка парсинга JSON: {e}")
-        data = None
-
-    # Если JSON не распарсился — пробуем как form-data
-    if not data:
+        # Пробуем как JSON
         try:
-            form_data = request.form.to_dict()
-            print("Form data:", form_data)
-            # Если form-data содержит строку JSON в каком-то поле — достанем
-            for value in form_data.values():
-                try:
-                    data = json.loads(value)
-                    break
-                except:
-                    pass
-        except:
-            pass
+            data = json.loads(raw_body)
+        except Exception:
+            data = {}
 
-    if not data:
-        return jsonify({"error": "Не удалось разобрать входящие данные"}), 400
+        orders = (
+            data.get("data", {}).get("orders") or
+            data.get("orders") or
+            data.get("data")  # иногда GraphQL кладёт всё прямо сюда
+        )
 
-    print("📦 Распознанный JSON:", json.dumps(data, ensure_ascii=False, indent=2))
+        if not orders:
+            print("⚠ Не удалось найти поле orders, структура другая")
+            return jsonify({"error": "Нет заказов"}), 400
 
-    # Универсальный способ достать заказы
-    orders = (
-        data.get("data", {}).get("orders")  # data.orders
-        or data.get("orders")               # orders
-    )
+        if isinstance(orders, dict):
+            orders = [orders]
 
-    # Если пришёл объект, а не список — оборачиваем
-    if orders and isinstance(orders, dict):
-        orders = [orders]
+        threading.Thread(
+            target=process_salesrender_order,
+            args=(orders[0],),
+            daemon=True
+        ).start()
 
-    # Если вообще нет orders, но пришёл объект заказа
-    if not orders and "customer" in data:
-        orders = [data]
+        return jsonify({"status": "accepted"}), 200
 
-    if not orders:
-        return jsonify({"error": "Нет заказов в данных"}), 400
-
-    # Запускаем обработку первого заказа в отдельном потоке
-    threading.Thread(
-        target=process_salesrender_order,
-        args=(orders[0],),
-        daemon=True
-    ).start()
-
-    return jsonify({"status": "accepted"}), 200
+    except Exception as e:
+        print(f"❌ Ошибка парсинга CRM-хука: {e}")
+        return jsonify({"error": str(e)}), 200
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
