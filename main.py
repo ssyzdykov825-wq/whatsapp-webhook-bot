@@ -353,12 +353,22 @@ def salesrender_hook():
     try:
         payload = request.get_json()
         print("Webhook payload:", payload)
-        order = payload if "id" in payload else payload.get("orders", [None])[0]
+
+        order = None
+        if isinstance(payload, dict):
+            if "id" in payload:
+                order = payload
+            elif "orders" in payload and isinstance(payload["orders"], list) and payload["orders"]:
+                order = payload["orders"][0]
+
         if not order:
+            print("❌ Вебхук не содержит заказа")
             return jsonify({"error": "Нет данных заказа"}), 400
+
         threading.Thread(target=process_salesrender_order, args=(order,), daemon=True).start()
         return jsonify({"status": "accepted"}), 200
     except Exception as e:
+        print(f"❌ Ошибка в salesrender_hook: {e}")
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
