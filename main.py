@@ -384,25 +384,28 @@ def salesrender_hook():
     print("Headers:", dict(request.headers))
     print("Body:", request.data.decode("utf-8"))
 
-    try:
-        data = request.get_json()
+try:
+    data = request.get_json()
 
-orders = (
-    data.get("data", {}).get("orders")
-    or data.get("orders")
-    or ([data] if "id" in data else [])
-)
-        if not orders:
-            return jsonify({"error": "Нет заказов в ответе"}), 400
+    orders = (
+        data.get("data", {}).get("orders")
+        or data.get("orders")
+        or ([data] if "id" in data else [])
+    )
+    if not orders:
+        return jsonify({"error": "Нет заказов в ответе"}), 400
 
-        # Запускаем обработку в отдельном потоке, чтобы не блокировать Flask
-        threading.Thread(target=process_salesrender_order, args=(orders[0],), daemon=True).start()
+    threading.Thread(
+        target=process_salesrender_order,
+        args=(orders[0],),
+        daemon=True
+    ).start()
 
-        return jsonify({"status": "accepted"}), 200
+    return jsonify({"status": "accepted"}), 200
 
-    except Exception as e:
-        print(f"❌ Ошибка парсинга CRM-хука: {e}")
-        return jsonify({"error": str(e)}), 200
+except Exception as e:
+    print(f"❌ Ошибка парсинга CRM-хука: {e}")
+    return jsonify({"error": str(e)}), 200
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
