@@ -366,12 +366,38 @@ def salesrender_hook():
     try:
         data = request.get_json(force=True)
         
-        # Логируем в консоль (Render пишет это в логи)
+        # Логируем в консоль
         print("===== WEBHOOK DATA =====", file=sys.stdout)
         print(json.dumps(data, indent=2, ensure_ascii=False), file=sys.stdout)
         print("========================", file=sys.stdout)
-        
-        # Можно сразу вернуть 200
+
+        # Извлекаем данные из запроса CRM
+        order_id = data.get("id")
+        human_name = data.get("data", {}).get("humanNameFields", {}).get("value", {})
+        first_name = human_name.get("firstName", "")
+        last_name = human_name.get("lastName", "")
+        phone = data.get("data", {}).get("phoneFields", {}).get("value", {}).get("international", "")
+
+        if not phone:
+            return jsonify({"error": "No phone number"}), 400
+
+        # Формируем текст сообщения
+        message_text = f"Новый заказ #{order_id} от {first_name} {last_name}. Телефон: {phone}"
+
+        # Отправка сообщения в WhatsApp
+        headers = {
+            "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": phone,
+            "type": "text",
+            "text": {"body": message_text}
+        }
+        resp = requests.post(WHATSAPP_API_URL, headers=headers, json=payload)
+
+        print("WhatsApp API response:", resp.text)
         return jsonify({"status": "ok"}), 200
     
     except Exception as e:
