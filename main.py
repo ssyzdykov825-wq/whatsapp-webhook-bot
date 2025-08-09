@@ -258,13 +258,9 @@ def webhook():
 def home():
     return "Healvix бот іске қосылды!", 200
 
-import aiohttp
-import asyncio
-from flask import Flask, request, jsonify
 from datetime import datetime, timedelta
 
 # ==== Настройки ====
-app = Flask(__name__)
 
 SALESRENDER_URL = "https://de.backend.salesrender.com/companies/1123/CRM"
 SALESRENDER_TOKEN = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXNyZW5kZXIuY29tLyIsImF1ZCI6IkNSTSIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc"
@@ -272,8 +268,8 @@ SALESRENDER_TOKEN = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHR
 # Хранилище для защиты от повторов
 last_sent = {}
 
-# ==== Асинхронная функция запроса в CRM ====
-async def fetch_order_from_crm(order_id):
+# ==== Функция запроса в CRM ====
+def fetch_order_from_crm(order_id):
     headers = {
         "Content-Type": "application/json",
         "Authorization": SALESRENDER_TOKEN
@@ -304,25 +300,22 @@ async def fetch_order_from_crm(order_id):
         }}
         """
     }
-
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(SALESRENDER_URL, headers=headers, json=query, timeout=10) as response:
-                response.raise_for_status()
-                data = await response.json()
-                orders = data.get("data", {}).get("ordersFetcher", {}).get("orders", [])
-                return orders[0] if orders else None
+        response = requests.post(SALESRENDER_URL, headers=headers, json=query, timeout=10)
+        response.raise_for_status()
+        data = response.json().get("data", {}).get("ordersFetcher", {}).get("orders", [])
+        return data[0] if data else None
     except Exception as e:
         print(f"❌ Ошибка запроса в CRM API: {e}")
         return None
 
-# ==== Асинхронная основная логика ====
-async def process_salesrender_order(order):
+# ==== Основная логика ====
+def process_salesrender_order(order):
     try:
         # Если customer пуст — подтягиваем из CRM
         if not order.get("customer") and "id" in order:
             print(f"⚠ customer пуст, подтягиваю из CRM по ID {order['id']}")
-            full_order = await fetch_order_from_crm(order["id"])
+            full_order = fetch_order_from_crm(order["id"])
             if full_order:
                 order = full_order
             else:
@@ -384,7 +377,7 @@ async def process_salesrender_order(order):
                     f"Есімін қолданбаңыз."
                 )
 
-            gpt_response = await client.chat.completions.create(
+            gpt_response = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.7
@@ -395,7 +388,7 @@ async def process_salesrender_order(order):
             message_text = f"{greeting}! Біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
 
         # Отправляем в WhatsApp (твоя функция)
-        await send_whatsapp_message(phone, message_text)
+        send_whatsapp_message(phone, message_text)
 
         # Запоминаем отправку
         last_sent[phone] = now
@@ -404,12 +397,12 @@ async def process_salesrender_order(order):
     except Exception as e:
         print(f"❌ Ошибка обработки заказа: {e}")
 
-# ==== Асинхронный обработчик вебхука ====
+# ==== Вебхук ====
 @app.route('/salesrender-hook', methods=['POST'])
-async def salesrender_hook():
+def salesrender_hook():
     print("=== Входящий запрос в /salesrender-hook ===")
     try:
-        data = await request.get_json()
+        data = request.get_json()
         print("Payload:", data)
 
         orders = (
@@ -421,9 +414,7 @@ async def salesrender_hook():
         if not orders or not isinstance(orders, list):
             return jsonify({"error": "Нет заказов"}), 400
 
-        # Асинхронно обрабатываем заказ
-        await process_salesrender_order(orders[0])
-
+        threading.Thread(target=process_salesrender_order, args=(orders[0],), daemon=True).start()
         return jsonify({"status": "accepted"}), 200
     except Exception as e:
         print(f"❌ Ошибка парсинга вебхука: {e}")
