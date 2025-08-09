@@ -258,12 +258,12 @@ def webhook():
 def home():
     return "Healvix бот іске қосылды!", 200
 
+from flask import Flask, request, jsonify
 from datetime import datetime, timedelta
-import threading
 
 app = Flask(__name__)
 
-# Хранилище для защиты от повторов
+# Хранилище для защиты от повторных отправок
 last_sent = {}
 
 def process_salesrender_order(order):
@@ -271,26 +271,17 @@ def process_salesrender_order(order):
         # ===== Имя =====
         first_name = ""
         last_name = ""
-
-        if order.get("customer"):  # Если есть customer
-            first_name = order["customer"].get("name", {}).get("firstName", "").strip()
-            last_name = order["customer"].get("name", {}).get("lastName", "").strip()
-        else:  # Если customer пуст — берём из data.humanNameFields
-            human_fields = order.get("data", {}).get("humanNameFields", [])
-            if human_fields and "value" in human_fields[0]:
-                first_name = human_fields[0]["value"].get("firstName", "").strip()
-                last_name = human_fields[0]["value"].get("lastName", "").strip()
-
+        human_fields = order.get("data", {}).get("humanNameFields", [])
+        if human_fields and "value" in human_fields[0]:
+            first_name = human_fields[0]["value"].get("firstName", "").strip()
+            last_name = human_fields[0]["value"].get("lastName", "").strip()
         name = f"{first_name} {last_name}".strip()
 
         # ===== Телефон =====
         phone = ""
-        if order.get("customer"):
-            phone = order["customer"].get("phone", {}).get("raw", "").strip()
-        else:
-            phone_fields = order.get("data", {}).get("phoneFields", [])
-            if phone_fields and "value" in phone_fields[0]:
-                phone = phone_fields[0]["value"].get("international", "").strip()
+        phone_fields = order.get("data", {}).get("phoneFields", [])
+        if phone_fields and "value" in phone_fields[0]:
+            phone = phone_fields[0]["value"].get("international", "").strip()
 
         if not phone:
             print("❌ Телефон не указан — пропуск")
@@ -312,36 +303,11 @@ def process_salesrender_order(order):
         else:
             greeting = "Қайырлы кеш"
 
-        # ===== Формируем запрос в GPT =====
-        try:
-            if name:
-                prompt = (
-                    f"{greeting}! Клиенттің аты {name}. "
-                    f"Оған қоңырау шалдық, бірақ байланыс болмады. "
-                    f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
-                    f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз."
-                )
-            else:
-                prompt = (
-                    f"{greeting}! Біз клиентке қоңырау шалдық, бірақ байланыс болмады. "
-                    f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
-                    f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз. "
-                    f"Есімін қолданбаңыз."
-                )
-
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.7
-            )
-            message_text = response.choices[0].message.content.strip()
-
-        except Exception as e:
-            print(f"❌ GPT қатесі: {e}")
-            if name:
-                message_text = f"{greeting}! {name}, біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
-            else:
-                message_text = f"{greeting}! Біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
+        # ===== Формируем сообщение =====
+        if name:
+            message_text = f"{greeting}! {name}, біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
+        else:
+            message_text = f"{greeting}! Біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
 
         # ===== Отправка в WhatsApp =====
         send_whatsapp_message(phone, message_text)
@@ -349,7 +315,7 @@ def process_salesrender_order(order):
         # Запоминаем время отправки
         last_sent[phone] = now
 
-        print(f"✅ Сообщение для {phone} отправлено")
+        print(f"✅ Сообщение для {phone} отправлено: {message_text}")
 
     except Exception as e:
         print(f"❌ Ошибка обработки заказа: {e}")
@@ -358,8 +324,16 @@ def process_salesrender_order(order):
 @app.route("/salesrender-hook", methods=["POST"])
 def salesrender_hook():
     try:
-        order_data = request.json
-        process_salesrender_order(order_data)
+        payload = request.json
+        print("📦 Пришёл заказ:", payload)
+
+        orders = payload.get("data", {}).get("ordersFetcher", {}).get("orders", [])
+        if not orders:
+            return jsonify({"error": "Нет заказов в payload"}), 400
+
+        order = orders[0]  # Берём первый заказ
+        process_salesrender_order(order)
+
         return jsonify({"status": "ok"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
