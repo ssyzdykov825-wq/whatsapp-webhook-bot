@@ -364,36 +364,30 @@ import json
 def salesrender_hook():
     print("=== Входящий запрос в /salesrender-hook ===")
     print("Headers:", dict(request.headers))
-
-    raw_body = request.data.decode("utf-8")
+    
+    raw_body = request.data.decode("utf-8", errors="ignore")
     print("📩 Сырой Body:", raw_body)
 
+    # Лог в файл (Render позволяет писать в /tmp)
+    with open("/tmp/salesrender_log.txt", "a", encoding="utf-8") as f:
+        f.write(f"\n=== {datetime.utcnow()} UTC ===\n")
+        f.write("Headers: " + str(dict(request.headers)) + "\n")
+        f.write("Body: " + raw_body + "\n")
+
     try:
-        # Пробуем как JSON
-        try:
-            data = json.loads(raw_body)
-        except Exception:
-            data = {}
+        data = request.get_json(force=True)
+        print("📦 JSON:", data)
 
         orders = (
-            data.get("data", {}).get("orders") or
-            data.get("orders") or
-            data.get("data")  # иногда GraphQL кладёт всё прямо сюда
+            data.get("data", {}).get("orders")
+            or data.get("orders")
+            or []
         )
-
         if not orders:
-            print("⚠ Не удалось найти поле orders, структура другая")
-            return jsonify({"error": "Нет заказов"}), 400
+            print("❌ Нет заказов в JSON")
+            return jsonify({"error": "Нет заказов в ответе"}), 400
 
-        if isinstance(orders, dict):
-            orders = [orders]
-
-        threading.Thread(
-            target=process_salesrender_order,
-            args=(orders[0],),
-            daemon=True
-        ).start()
-
+        threading.Thread(target=process_salesrender_order, args=(orders[0],), daemon=True).start()
         return jsonify({"status": "accepted"}), 200
 
     except Exception as e:
