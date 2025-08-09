@@ -259,19 +259,18 @@ def home():
     return "Healvix бот іске қосылды!", 200
 
 import requests
-from flask import Flask, request, jsonify
 from datetime import datetime, timedelta
 import threading
 
-app = Flask(__name__)
-
+# Конфиг API
 SALESRENDER_URL = "https://de.backend.salesrender.com/companies/1123/CRM"
 SALESRENDER_TOKEN = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXNyZW5kZXIuY29tLyIsImF1ZCI6IkNSTSIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc"
 
-# Защита от повторов
+# Хранилище для защиты от повторов
 last_sent = {}
 
 def fetch_order_from_crm(order_id):
+    """Запрос в CRM по ID заказа"""
     headers = {
         "Content-Type": "application/json",
         "Authorization": SALESRENDER_TOKEN
@@ -302,74 +301,124 @@ def fetch_order_from_crm(order_id):
         }}
         """
     }
-    response = requests.post(SALESRENDER_URL, headers=headers, json=query)
-    response.raise_for_status()
-    data = response.json().get("data", {}).get("ordersFetcher", {}).get("orders", [])
-    return data[0] if data else None
+    try:
+        response = requests.post(SALESRENDER_URL, headers=headers, json=query, timeout=10)
+        response.raise_for_status()
+        data = response.json().get("data", {}).get("ordersFetcher", {}).get("orders", [])
+        return data[0] if data else None
+    except Exception as e:
+        print(f"❌ Ошибка запроса в CRM API: {e}")
+        return None
 
 def process_salesrender_order(order):
-    if not order.get("customer"):
-        print(f"⚠ customer пуст, подтягиваю из CRM по ID {order.get('id')}")
-        full = fetch_order_from_crm(order.get("id"))
-        if full:
-            order = full
-        else:
-            print("❌ CRM не вернул данные")
+    try:
+        # Достаём имя и телефон из вебхука
+        first_name = order.get("customer", {}).get("name", {}).get("firstName", "").strip()
+        last_name = order.get("customer", {}).get("name", {}).get("lastName", "").strip()
+        phone = order.get("customer", {}).get("phone", {}).get("raw", "").strip()
+
+        # Если данных нет — тянем из CRM API
+        if not first_name or not phone:
+            print(f"⚠ Нет данных имени/телефона, запрос в CRM API для ID {order.get('id')}")
+            crm_order = fetch_order_from_crm(order.get("id"))
+            if crm_order:
+                if not first_name or not last_name:
+                    human = crm_order["data"]["humanNameFields"][0]["value"] if crm_order["data"]["humanNameFields"] else {}
+                    first_name = first_name or human.get("firstName", "")
+                    last_name = last_name or human.get("lastName", "")
+                if not phone and crm_order["data"]["phoneFields"]:
+                    phone = crm_order["data"]["phoneFields"][0]["value"]["international"]
+
+        name = f"{first_name} {last_name}".strip()
+
+        # Проверка телефона
+        if not phone:
+            print("❌ Телефон не указан — пропуск")
             return
 
-    # Достаём имя
-    human = order["data"]["humanNameFields"][0]["value"] if order["data"]["humanNameFields"] else {}
-    first = human.get("firstName", "")
-    last = human.get("lastName", "")
-    name = (first + " " + last).strip()
+        # Проверка на повтор в течение 6 часов
+        now = datetime.utcnow()
+        if phone in last_sent and now - last_sent[phone] < timedelta(hours=6):
+            print(f"⚠️ Повторный недозвон по {phone} — пропускаем")
+            return
 
-    # Достаём телефон
-    phone = order["data"]["phoneFields"][0]["value"]["international"] \
-        if order["data"]["phoneFields"] else ""
-    if not phone:
-        print("❌ Телефон отсутствует — пропуск")
-        return
+        # Определяем время суток (Казахстан UTC+6)
+        now_kz = now + timedelta(hours=6)
+        hour = now_kz.hour
+        if 5 <= hour < 12:
+            greeting = "Қайырлы таң"
+        elif 12 <= hour < 18:
+            greeting = "Сәлеметсіз бе"
+        else:
+            greeting = "Қайырлы кеш"
 
-    now = datetime.utcnow()
-    if phone in last_sent and now - last_sent[phone] < timedelta(hours=6):
-        print(f"⚠ Повторному отправке на {phone} — пропускаем")
-        return
+        # Формируем запрос в GPT
+        try:
+            if name:
+                prompt = (
+                    f"{greeting}! Клиенттің аты {name}. "
+                    f"Оған қоңырау шалдық, бірақ байланыс болмады. "
+                    f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
+                    f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз."
+                )
+            else:
+                prompt = (
+                    f"{greeting}! Біз клиентке қоңырау шалдық, бірақ байланыс болмады. "
+                    f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
+                    f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз. "
+                    f"Есімін қолданбаңыз."
+                )
 
-    now_kz = now + timedelta(hours=6)
-    greeting = "Қайырлы таң" if 5 <= now_kz.hour < 12 else "Сәлеметсіз бе" if now_kz.hour < 18 else "Қайырлы кеш"
-    prompt = (
-        f"{greeting}! Клиенттің аты {name}. Біз қоңырау шалдық, бірақ байланыс болмады. "
-        f"Жылы, достық хабарлама жазыңыз. Айдос — Healvix орталығынан."
-    )
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7
+            )
+            message_text = response.choices[0].message.content.strip()
 
-    message_text = prompt  # Подставь вызов GPT вместо этого
+        except Exception as e:
+            print(f"❌ GPT қатесі: {e}")
+            if name:
+                message_text = f"{greeting}! {name}, біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
+            else:
+                message_text = f"{greeting}! Біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
 
-    send_whatsapp_message(phone, message_text)
-    last_sent[phone] = now
-    print(f"✅ Сообщение отправлено: {phone}")
+        # Отправка в WhatsApp
+        send_whatsapp_message(phone, message_text)
+
+        # Запоминаем время отправки
+        last_sent[phone] = now
+
+        print(f"✅ Сообщение для {phone} отправлено")
+    except Exception as e:
+        print(f"❌ Ошибка обработки заказа: {e}")
+
 
 @app.route('/salesrender-hook', methods=['POST'])
 def salesrender_hook():
+    print("=== Входящий запрос в /salesrender-hook ===")
+    print("Headers:", dict(request.headers))
+    print("Body:", request.data.decode("utf-8"))
+
     try:
-        payload = request.get_json()
-        print("Webhook payload:", payload)
+        data = request.get_json()
 
-        order = None
-        if isinstance(payload, dict):
-            if "id" in payload:
-                order = payload
-            elif "orders" in payload and isinstance(payload["orders"], list) and payload["orders"]:
-                order = payload["orders"][0]
+        orders = (
+            data.get("data", {}).get("orders")
+            or data.get("orders")
+            or []
+        )
+        if not orders:
+            return jsonify({"error": "Нет заказов в ответе"}), 400
 
-        if not order:
-            print("❌ Вебхук не содержит заказа")
-            return jsonify({"error": "Нет данных заказа"}), 400
+        # Запускаем обработку в отдельном потоке, чтобы не блокировать Flask
+        threading.Thread(target=process_salesrender_order, args=(orders[0],), daemon=True).start()
 
-        threading.Thread(target=process_salesrender_order, args=(order,), daemon=True).start()
         return jsonify({"status": "accepted"}), 200
+
     except Exception as e:
-        print(f"❌ Ошибка в salesrender_hook: {e}")
-        return jsonify({"error": str(e)}), 500
+        print(f"❌ Ошибка парсинга CRM-хука: {e}")
+        return jsonify({"error": str(e)}), 200
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
