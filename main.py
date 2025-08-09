@@ -258,82 +258,56 @@ def webhook():
 def home():
     return "Healvix бот іске қосылды!", 200
 
-# CRM API
-CRM_URL = "https://de.backend.salesrender.com/companies/1123/CRM"
-CRM_HEADERS = {
-    "Content-Type": "application/json",
-    "Authorization": "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXNyZW5kZXIuY29tLyIsImF1ZCI6IkNSTSIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc"  # возьми из Altair в HTTP Headers
-}
+from datetime import datetime, timedelta
+import threading
+import requests
+import os
 
 # Хранилище для защиты от повторов
 last_sent = {}
 
-# --- Запрос деталей заказа по ID ---
-def fetch_order_details(order_id):
-    query = """
-    query getOrder($id: ID!) {
-      ordersFetcher(filters: { include: { ids: [$id] } }) {
-        orders {
-          id
-          data {
-            humanNameFields {
-              value {
-                firstName
-                lastName
-              }
-            }
-            phoneFields {
-              value {
-                raw
-                international
-                national
-              }
-            }
-          }
-        }
-      }
+SALESRENDER_URL = "https://de.backend.salesrender.com/companies/1123/CRM"
+SALESRENDER_TOKEN = os.getenv("SALESRENDER_TOKEN")  # токен положи в переменные окружения
+
+def get_customer_from_crm(order_id):
+    """Запрашиваем данные клиента из SalesRender GraphQL API"""
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXNyZW5kZXIuY29tLyIsImF1ZCI6IkNSTSIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc"
     }
-    """
-    variables = {"id": order_id}
-    resp = requests.post(CRM_URL, headers=CRM_HEADERS, json={"query": query, "variables": variables})
-    resp.raise_for_status()
-    data = resp.json()
+    query = {
+        "query": f"""
+            query {{
+                order(id: {order_id}) {{
+                    id
+                    customer {{
+                        name {{ firstName lastName }}
+                        phone {{ raw }}
+                    }}
+                }}
+            }}
+        """
+    }
     try:
-        order = data["data"]["ordersFetcher"]["orders"][0]
-        name_data = order["data"]["humanNameFields"][0]["value"]
-        phone_data = order["data"]["phoneFields"][0]["value"]
-        return {
-            "customer": {
-                "name": {
-                    "firstName": name_data.get("firstName", ""),
-                    "lastName": name_data.get("lastName", "")
-                },
-                "phone": {
-                    "raw": phone_data.get("raw", ""),
-                    "international": phone_data.get("international", ""),
-                    "national": phone_data.get("national", "")
-                }
-            }
-        }
+        resp = requests.post(SALESRENDER_URL, headers=headers, json=query)
+        if resp.status_code == 200:
+            data = resp.json()
+            order = data.get("data", {}).get("order")
+            if order and order.get("customer"):
+                return order["customer"]
+        else:
+            print("❌ Ошибка при запросе к CRM:", resp.status_code, resp.text)
     except Exception as e:
-        print("❌ Ошибка парсинга GraphQL:", e, data)
-        return None
+        print("❌ Ошибка обращения к CRM:", e)
+    return None
 
-# --- Отправка в WhatsApp (заглушка) ---
-def send_whatsapp_message(phone, text):
-    print(f"📲 WhatsApp → {phone}: {text}")
-    # Здесь твой код отправки в WhatsApp API
 
-# --- Основная обработка заказа ---
 def process_salesrender_order(order):
     try:
-        # Если в заказе нет имени/телефона — достанем через GraphQL
-        if not order.get("customer") or not order["customer"].get("phone"):
-            fetched = fetch_order_details(order["id"])
-            if not fetched:
-                print("❌ Не удалось получить данные заказа")
-                return
-            order["customer"] = fetched["customer"]
+        # Если customer пустой — пытаемся подтянуть из CRM
+        if order.get("customer") is None and order.get("id"):
+            print(f"⚠ Клиент пустой, подтягиваю из CRM по order {order['id']}")
+            order["customer"] = get_customer_from_crm(order["id"])
 
         # Достаём имя
         first_name = order.get("customer", {}).get("name", {}).get("firstName", "").strip()
@@ -362,7 +336,7 @@ def process_salesrender_order(order):
         else:
             greeting = "Қайырлы кеш"
 
-        # Формируем текст через GPT
+        # Формируем запрос в GPT
         try:
             if name:
                 prompt = (
@@ -400,11 +374,10 @@ def process_salesrender_order(order):
         last_sent[phone] = now
 
         print(f"✅ Сообщение для {phone} отправлено")
-
     except Exception as e:
         print(f"❌ Ошибка обработки заказа: {e}")
 
-# --- Маршрут вебхука ---
+
 @app.route('/salesrender-hook', methods=['POST'])
 def salesrender_hook():
     print("=== Входящий запрос в /salesrender-hook ===")
@@ -413,6 +386,7 @@ def salesrender_hook():
 
     try:
         data = request.get_json()
+
         orders = (
             data.get("data", {}).get("orders")
             or data.get("orders")
@@ -421,7 +395,7 @@ def salesrender_hook():
         if not orders:
             return jsonify({"error": "Нет заказов в ответе"}), 400
 
-        # Запускаем обработку в отдельном потоке
+        # Запускаем обработку в отдельном потоке, чтобы не блокировать Flask
         threading.Thread(target=process_salesrender_order, args=(orders[0],), daemon=True).start()
 
         return jsonify({"status": "accepted"}), 200
