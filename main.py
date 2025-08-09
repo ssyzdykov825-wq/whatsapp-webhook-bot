@@ -258,42 +258,101 @@ def webhook():
 def home():
     return "Healvix бот іске қосылды!", 200
 
-from flask import Flask, request, jsonify
-from datetime import datetime, timedelta
+# CRM API
+CRM_URL = "https://de.backend.salesrender.com/companies/1123/CRM"
+CRM_HEADERS = {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXNyZW5kZXIuY29tLyIsImF1ZCI6IkNSTSIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc"  # возьми из Altair в HTTP Headers
+}
 
-app = Flask(__name__)
-
-# Хранилище для защиты от повторных отправок
+# Хранилище для защиты от повторов
 last_sent = {}
 
+# --- Запрос деталей заказа по ID ---
+def fetch_order_details(order_id):
+    query = """
+    query getOrder($id: ID!) {
+      ordersFetcher(filters: { include: { ids: [$id] } }) {
+        orders {
+          id
+          data {
+            humanNameFields {
+              value {
+                firstName
+                lastName
+              }
+            }
+            phoneFields {
+              value {
+                raw
+                international
+                national
+              }
+            }
+          }
+        }
+      }
+    }
+    """
+    variables = {"id": order_id}
+    resp = requests.post(CRM_URL, headers=CRM_HEADERS, json={"query": query, "variables": variables})
+    resp.raise_for_status()
+    data = resp.json()
+    try:
+        order = data["data"]["ordersFetcher"]["orders"][0]
+        name_data = order["data"]["humanNameFields"][0]["value"]
+        phone_data = order["data"]["phoneFields"][0]["value"]
+        return {
+            "customer": {
+                "name": {
+                    "firstName": name_data.get("firstName", ""),
+                    "lastName": name_data.get("lastName", "")
+                },
+                "phone": {
+                    "raw": phone_data.get("raw", ""),
+                    "international": phone_data.get("international", ""),
+                    "national": phone_data.get("national", "")
+                }
+            }
+        }
+    except Exception as e:
+        print("❌ Ошибка парсинга GraphQL:", e, data)
+        return None
+
+# --- Отправка в WhatsApp (заглушка) ---
+def send_whatsapp_message(phone, text):
+    print(f"📲 WhatsApp → {phone}: {text}")
+    # Здесь твой код отправки в WhatsApp API
+
+# --- Основная обработка заказа ---
 def process_salesrender_order(order):
     try:
-        # ===== Имя =====
-        first_name = ""
-        last_name = ""
-        human_fields = order.get("data", {}).get("humanNameFields", [])
-        if human_fields and "value" in human_fields[0]:
-            first_name = human_fields[0]["value"].get("firstName", "").strip()
-            last_name = human_fields[0]["value"].get("lastName", "").strip()
+        # Если в заказе нет имени/телефона — достанем через GraphQL
+        if not order.get("customer") or not order["customer"].get("phone"):
+            fetched = fetch_order_details(order["id"])
+            if not fetched:
+                print("❌ Не удалось получить данные заказа")
+                return
+            order["customer"] = fetched["customer"]
+
+        # Достаём имя
+        first_name = order.get("customer", {}).get("name", {}).get("firstName", "").strip()
+        last_name = order.get("customer", {}).get("name", {}).get("lastName", "").strip()
         name = f"{first_name} {last_name}".strip()
 
-        # ===== Телефон =====
-        phone = ""
-        phone_fields = order.get("data", {}).get("phoneFields", [])
-        if phone_fields and "value" in phone_fields[0]:
-            phone = phone_fields[0]["value"].get("international", "").strip()
-
+        # Достаём телефон
+        phone = order.get("customer", {}).get("phone", {}).get("raw", "").strip()
         if not phone:
             print("❌ Телефон не указан — пропуск")
             return
 
-        # ===== Проверка на повтор =====
+        # Проверка на повтор в течение 6 часов
         now = datetime.utcnow()
         if phone in last_sent and now - last_sent[phone] < timedelta(hours=6):
             print(f"⚠️ Повторный недозвон по {phone} — пропускаем")
             return
 
-        # ===== Приветствие по времени суток (Казахстан UTC+6) =====
+        # Определяем время суток (Казахстан UTC+6)
         now_kz = now + timedelta(hours=6)
         hour = now_kz.hour
         if 5 <= hour < 12:
@@ -303,40 +362,73 @@ def process_salesrender_order(order):
         else:
             greeting = "Қайырлы кеш"
 
-        # ===== Формируем сообщение =====
-        if name:
-            message_text = f"{greeting}! {name}, біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
-        else:
-            message_text = f"{greeting}! Біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
+        # Формируем текст через GPT
+        try:
+            if name:
+                prompt = (
+                    f"{greeting}! Клиенттің аты {name}. "
+                    f"Оған қоңырау шалдық, бірақ байланыс болмады. "
+                    f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
+                    f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз."
+                )
+            else:
+                prompt = (
+                    f"{greeting}! Біз клиентке қоңырау шалдық, бірақ байланыс болмады. "
+                    f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
+                    f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз. "
+                    f"Есімін қолданбаңыз."
+                )
 
-        # ===== Отправка в WhatsApp =====
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7
+            )
+            message_text = response.choices[0].message.content.strip()
+
+        except Exception as e:
+            print(f"❌ GPT қатесі: {e}")
+            if name:
+                message_text = f"{greeting}! {name}, біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
+            else:
+                message_text = f"{greeting}! Біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
+
+        # Отправка в WhatsApp
         send_whatsapp_message(phone, message_text)
 
         # Запоминаем время отправки
         last_sent[phone] = now
 
-        print(f"✅ Сообщение для {phone} отправлено: {message_text}")
+        print(f"✅ Сообщение для {phone} отправлено")
 
     except Exception as e:
         print(f"❌ Ошибка обработки заказа: {e}")
 
-
-@app.route("/salesrender-hook", methods=["POST"])
+# --- Маршрут вебхука ---
+@app.route('/salesrender-hook', methods=['POST'])
 def salesrender_hook():
+    print("=== Входящий запрос в /salesrender-hook ===")
+    print("Headers:", dict(request.headers))
+    print("Body:", request.data.decode("utf-8"))
+
     try:
-        payload = request.json
-        print("📦 Пришёл заказ:", payload)
-
-        orders = payload.get("data", {}).get("ordersFetcher", {}).get("orders", [])
+        data = request.get_json()
+        orders = (
+            data.get("data", {}).get("orders")
+            or data.get("orders")
+            or []
+        )
         if not orders:
-            return jsonify({"error": "Нет заказов в payload"}), 400
+            return jsonify({"error": "Нет заказов в ответе"}), 400
 
-        order = orders[0]  # Берём первый заказ
-        process_salesrender_order(order)
+        # Запускаем обработку в отдельном потоке
+        threading.Thread(target=process_salesrender_order, args=(orders[0],), daemon=True).start()
 
-        return jsonify({"status": "ok"}), 200
+        return jsonify({"status": "accepted"}), 200
+
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print(f"❌ Ошибка парсинга CRM-хука: {e}")
+        return jsonify({"error": str(e)}), 200
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
