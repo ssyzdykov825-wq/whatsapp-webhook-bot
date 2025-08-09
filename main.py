@@ -387,11 +387,11 @@ def salesrender_hook():
     try:
         data = request.get_json()
 
-        orders = (
-            data.get("data", {}).get("orders")
-            or data.get("orders")
-            or []
-        )
+orders = (
+    data.get("data", {}).get("orders")
+    or data.get("orders")
+    or ([data] if "id" in data else [])
+)
         if not orders:
             return jsonify({"error": "Нет заказов в ответе"}), 400
 
