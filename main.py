@@ -2,33 +2,10 @@ import os
 import time
 import threading
 import requests
-import sys
 from flask import Flask, request, jsonify
 from openai import OpenAI
 
 app = Flask(__name__)
-
-from flask import request
-import json
-
-@app.before_request
-def log_all_requests():
-    if request.method == "POST":
-        print("\n=== 📡 Пойман POST-запрос ===")
-        print("Путь:", request.path)
-        print("Headers:", dict(request.headers))
-        try:
-            raw_body = request.data.decode("utf-8", errors="ignore")
-            print("Raw body:", raw_body)
-            try:
-                parsed = json.loads(raw_body)
-                print("📦 JSON:", json.dumps(parsed, ensure_ascii=False, indent=2))
-            except Exception:
-                print("⚠️ Не удалось распарсить JSON")
-        except Exception as e:
-            print(f"Ошибка чтения тела: {e}")
-        print("============================\n")
-
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 WHATSAPP_API_URL = "https://waba-v2.360dialog.io/messages"
@@ -289,24 +266,41 @@ last_sent = {}
 
 def process_salesrender_order(order):
     try:
-        # Достаём имя
-        first_name = order.get("customer", {}).get("name", {}).get("firstName", "").strip()
-        last_name = order.get("customer", {}).get("name", {}).get("lastName", "").strip()
+        # ===== Имя =====
+        first_name = ""
+        last_name = ""
+
+        if order.get("customer"):  # Если есть customer
+            first_name = order["customer"].get("name", {}).get("firstName", "").strip()
+            last_name = order["customer"].get("name", {}).get("lastName", "").strip()
+        else:  # Если customer пуст — берём из data.humanNameFields
+            human_fields = order.get("data", {}).get("humanNameFields", [])
+            if human_fields and "value" in human_fields[0]:
+                first_name = human_fields[0]["value"].get("firstName", "").strip()
+                last_name = human_fields[0]["value"].get("lastName", "").strip()
+
         name = f"{first_name} {last_name}".strip()
 
-        # Достаём телефон
-        phone = order.get("customer", {}).get("phone", {}).get("raw", "").strip()
+        # ===== Телефон =====
+        phone = ""
+        if order.get("customer"):
+            phone = order["customer"].get("phone", {}).get("raw", "").strip()
+        else:
+            phone_fields = order.get("data", {}).get("phoneFields", [])
+            if phone_fields and "value" in phone_fields[0]:
+                phone = phone_fields[0]["value"].get("international", "").strip()
+
         if not phone:
             print("❌ Телефон не указан — пропуск")
             return
 
-        # Проверка на повтор в течение 6 часов
+        # ===== Проверка на повтор =====
         now = datetime.utcnow()
         if phone in last_sent and now - last_sent[phone] < timedelta(hours=6):
             print(f"⚠️ Повторный недозвон по {phone} — пропускаем")
             return
 
-        # Определяем время суток (Казахстан UTC+6)
+        # ===== Приветствие по времени суток (Казахстан UTC+6) =====
         now_kz = now + timedelta(hours=6)
         hour = now_kz.hour
         if 5 <= hour < 12:
@@ -316,7 +310,7 @@ def process_salesrender_order(order):
         else:
             greeting = "Қайырлы кеш"
 
-        # Формируем запрос в GPT
+        # ===== Формируем запрос в GPT =====
         try:
             if name:
                 prompt = (
@@ -334,7 +328,7 @@ def process_salesrender_order(order):
                 )
 
             response = client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-4o-mini",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.7
             )
@@ -347,62 +341,16 @@ def process_salesrender_order(order):
             else:
                 message_text = f"{greeting}! Біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
 
-        # Отправка в WhatsApp
+        # ===== Отправка в WhatsApp =====
         send_whatsapp_message(phone, message_text)
 
         # Запоминаем время отправки
         last_sent[phone] = now
 
         print(f"✅ Сообщение для {phone} отправлено")
+
     except Exception as e:
         print(f"❌ Ошибка обработки заказа: {e}")
-
-from flask import request, jsonify
-import threading
-import json
-
-@app.route("/salesrender-hook", methods=["POST"])
-def salesrender_hook():
-    try:
-        data = request.get_json(force=True)
-        
-        # Логируем в консоль
-        print("===== WEBHOOK DATA =====", file=sys.stdout)
-        print(json.dumps(data, indent=2, ensure_ascii=False), file=sys.stdout)
-        print("========================", file=sys.stdout)
-
-        # Извлекаем данные из запроса CRM
-        order_id = data.get("id")
-        human_name = data.get("data", {}).get("humanNameFields", {}).get("value", {})
-        first_name = human_name.get("firstName", "")
-        last_name = human_name.get("lastName", "")
-        phone = data.get("data", {}).get("phoneFields", {}).get("value", {}).get("international", "")
-
-        if not phone:
-            return jsonify({"error": "No phone number"}), 400
-
-        # Формируем текст сообщения
-        message_text = f"Новый заказ #{order_id} от {first_name} {last_name}. Телефон: {phone}"
-
-        # Отправка сообщения в WhatsApp
-        headers = {
-            "Authorization": f"Bearer {WHATSAPP_TOKEN}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "messaging_product": "whatsapp",
-            "to": phone,
-            "type": "text",
-            "text": {"body": message_text}
-        }
-        resp = requests.post(WHATSAPP_API_URL, headers=headers, json=payload)
-
-        print("WhatsApp API response:", resp.text)
-        return jsonify({"status": "ok"}), 200
-    
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
