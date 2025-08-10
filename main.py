@@ -179,7 +179,7 @@ def get_gpt_response(user_msg, user_phone):
         messages.append({"role": "user", "content": user_msg})
 
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-5",
             messages=messages,
             temperature=0.7
         )
@@ -378,7 +378,7 @@ def process_salesrender_order(order):
                 )
 
             gpt_response = client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-5",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.7
             )
