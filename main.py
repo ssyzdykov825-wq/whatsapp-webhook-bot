@@ -165,6 +165,8 @@ def create_order(customer_id, phone_raw, full_name, project_id="1", status_id="1
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
+    print("📩 Входящий вебхук:", data)  # 1 — печатаем всё, что пришло
+
     try:
         messages = data["entry"][0]["changes"][0]["value"].get("messages")
         if not messages:
@@ -176,20 +178,27 @@ def webhook():
         user_phone = raw_from
 
         customer_id = find_customer_by_phone(user_phone)
+        print("🔍 Найденный клиент:", customer_id)
+
         if not customer_id:
             customer_id = create_customer(user_name, user_phone)
+        print("👤 Созданный клиент:", customer_id)
+
         if not customer_id:
             return jsonify({"status": "error creating customer"}), 500
 
         order_id = create_order(customer_id, user_phone, user_name, project_id="1", status_id="1")
+        print("📦 Созданный заказ:", order_id)
+
         if not order_id:
             return jsonify({"status": "error creating order"}), 500
 
         print(f"✅ Заказ {order_id} создан для клиента {customer_id} ({user_name}, {user_phone})")
 
     except Exception as e:
-        print(f"❌ Ошибка в webhook: {e}")
-        return jsonify({"status": "error"}), 500
+        import traceback
+        traceback.print_exc()  # 2 — печатаем стек ошибки
+        return jsonify({"status": "error", "message": str(e)}), 500
 
     return jsonify({"status": "ok"}), 200
 
