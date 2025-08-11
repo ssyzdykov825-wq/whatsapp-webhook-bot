@@ -103,7 +103,7 @@ try:
     print("DEBUG: Ответ get_order_form_fields:", json.dumps(data, ensure_ascii=False, indent=2))
 except ValueError:
     print("❌ Ошибка получения формы заказа:", resp.text)
-    return None
+    return None  # <-- ОТСТУП ВОТ ТУТ ОБЯЗАТЕЛЕН!
 return data.get("data", {}).get("orderFormFetcher", {}).get("fields", [])
 
 # --- Создание заказа ---
