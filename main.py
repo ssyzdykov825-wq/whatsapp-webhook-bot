@@ -376,52 +376,42 @@ def process_salesrender_order(order):
             print(f"⚠ Повторный недозвон по {phone} — пропускаем")
             return
 
-        now_kz = now + timedelta(hours=6)
-        if 5 <= now_kz.hour < 12:
-            greeting = "Қайырлы таң"
-        elif 12 <= now_kz.hour < 18:
-            greeting = "Сәлеметсіз бе"
-        else:
-            greeting = "Қайырлы кеш"
+try:
+    now = datetime.utcnow()
+    if phone in last_sent and now - last_sent[phone] < timedelta(minutes=3):
+        print(f"⚠ Повторный недозвон по {phone} — пропускаем")
+        return
 
-        try:
-            if name:
-                prompt = (
-                    f"{greeting}! Клиенттің аты {name}. "
-                    f"Оған қоңырау шалдық, бірақ байланыс болмады. "
-                    f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
-                    f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз."
-                )
-            else:
-                prompt = (
-                    f"{greeting}! Біз клиентке қоңырау шалдық, бірақ байланыс болмады. "
-                    f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
-                    f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз. "
-                    f"Есімін қолданбаңыз."
-                )
+    now_kz = now + timedelta(hours=6)
+    if 5 <= now_kz.hour < 12:
+        greeting = "Қайырлы таң"
+    elif 12 <= now_kz.hour < 18:
+        greeting = "Сәлеметсіз бе"
+    else:
+        greeting = "Қайырлы кеш"
 
-            completion = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": "Сіз тәжірибелі клиенттік менеджерсіз."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=200
-            )
+    if name:
+        prompt = (
+            f"{greeting}! Клиенттің аты {name}. "
+            f"Оған қоңырау шалдық, бірақ байланыс болмады. "
+            f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
+            f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз."
+        )
+    else:
+        prompt = (
+            f"{greeting}! Біз клиентке қоңырау шалдық, бірақ байланыс болмады. "
+            f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
+            f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз. "
+            f"Есімін қолданбаңыз."
+        )
 
-            message_text = completion.choices[0].message.content.strip()
+    message_text = f"{greeting}! Бұл тесттік хабарлама."
+    handle_manager_message(phone, message_text)
+    last_sent[phone] = now
+    print(f"✅ Сообщение отправлено на {phone}")
 
-        except Exception as e:
-            print(f"❌ GPT қатесі: {e}")
-            message_text = (
-                f"{greeting}! Біз сізге қоңырау шалдық, бірақ байланыс болмады. "
-                f"Уақытыңыз болса, хабарласыңыз."
-            )
-
-        handle_manager_message(phone, message_text)
-
-        last_sent[phone] = now
-        print(f"✅ Сообщение отправлено на {phone}")
+except Exception as e:
+    print(f"❌ Ошибка обработки заказа: {e}")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
