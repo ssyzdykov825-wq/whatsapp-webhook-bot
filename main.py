@@ -11,23 +11,11 @@ headers = {
     "Authorization": SALESRENDER_TOKEN
 }
 
-def find_customer_by_phone(phone):
-    query = """
-    query ($phone: String!) {
-      customersFetcher(filters: { phoneFields: { value: $phone } }) {
-        customers {
-          id
-        }
-      }
-    }
-    """
-    variables = {"phone": phone}
-    response = requests.post(SALESRENDER_URL, json={"query": query, "variables": variables}, headers=headers)
-    data = response.json()
-    customers = data.get("data", {}).get("customersFetcher", {}).get("customers", [])
-    if customers:
-        return customers[0]["id"]
-    return None
+def format_phone_e164(phone_raw):
+    # Пример: если номер из WhatsApp приходит без +, добавим + и код страны
+    if not phone_raw.startswith("+"):
+        return "+" + phone_raw
+    return phone_raw
 
 def create_customer(name, phone):
     mutation = """
@@ -39,24 +27,28 @@ def create_customer(name, phone):
       }
     }
     """
+
     first_name = name.split()[0] if name else "Имя"
     last_name = " ".join(name.split()[1:]) if name and len(name.split()) > 1 else "Фамилия"
+    phone_e164 = format_phone_e164(phone)
+
     variables = {
         "input": {
-            "email": f"{phone}@example.com",  # Заглушка для email
-            "password": "ChangeMe123!",      # Заглушка для пароля
+            "email": f"{phone}@example.com",  # чтобы пройти валидацию email, можно генерить фейковый
+            "password": "SomeStrongPassword123!",
             "name": {
                 "firstName": first_name,
                 "lastName": last_name
             },
             "locale": {
-                "language": "ru_RU",
+                "language": "RU",  # заглавными и без подчёркивания
                 "currency": "KZT",
                 "timezone": "Asia/Almaty"
             },
-            "phone": phone
+            "phone": phone_e164
         }
     }
+
     response = requests.post(SALESRENDER_URL, json={"query": mutation, "variables": variables}, headers=headers)
     data = response.json()
     if "errors" in data:
@@ -77,27 +69,24 @@ def create_order(customer_id, phone):
       }
     }
     """
+    phone_e164 = format_phone_e164(phone)
     variables = {
         "input": {
             "projectId": "1",
-            "statusId": "1",  # статус «Обработка»
+            "statusId": "1",  # например, "Обработка"
             "orderData": {
-                "phoneFields": [{"value": phone}]
+                "phoneFields": [{"value": phone_e164}]
             },
             "customerId": customer_id
         }
     }
+
     response = requests.post(SALESRENDER_URL, json={"query": mutation, "variables": variables}, headers=headers)
     data = response.json()
     if "errors" in data:
         print("Ошибка создания заказа:", data["errors"])
         return None
     return data["data"]["orderMutation"]["addOrder"]["id"]
-
-def format_phone(phone):
-    if not phone.startswith("+"):
-        return "+" + phone
-    return phone
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -108,28 +97,30 @@ def webhook():
             return jsonify({"status": "no messages"}), 200
         
         msg = messages[0]
-        raw_phone = msg["from"]
-        user_phone = format_phone(raw_phone)
-        user_name = "Имя Клиента"  # если есть в данных — вытягивай, иначе заглушка
+        user_phone = msg["from"]
+        user_name = "Имя Клиента"  # можно попытаться получить имя из msg, если есть
         
-        # Проверяем клиента
+        # 1. Поиск клиента
         customer_id = find_customer_by_phone(user_phone)
         
+        # 2. Создаем клиента, если нет
         if not customer_id:
             customer_id = create_customer(user_name, user_phone)
             if not customer_id:
                 print("Не удалось создать клиента")
                 return jsonify({"status": "error creating customer"}), 500
         
+        # 3. Создаем заказ
         order_id = create_order(customer_id, user_phone)
         if not order_id:
             print("Не удалось создать заказ")
             return jsonify({"status": "error creating order"}), 500
         
         print(f"✅ Заказ создан с ID {order_id} для клиента {customer_id}")
+
     except Exception as e:
         print(f"❌ Ошибка в webhook: {e}")
-        return jsonify({"status": "error"}), 500
+        return jsonify({"status": "error", "message": str(e)}), 500
 
     return jsonify({"status": "ok"}), 200
 
