@@ -4,12 +4,13 @@ import threading
 import requests
 from flask import Flask, request, jsonify
 from openai import OpenAI
-from memory import load_memory, save_memory, add_message_to_memory
+from memory import save_message, get_recent_history
 
 def handle_manager_message(user_id, message_text):
-    history = load_memory(user_id)  # Загружаем память
-    add_message_to_memory(user_id, "assistant", message_text)  # Записываем сообщение от бота
-    send_whatsapp_message(user_id, message_text)  # Отправляем клиенту
+    # Сохраняем сообщение бота
+    save_message(user_id, "bot", message_text)
+    # Отправляем клиенту
+    send_whatsapp_message(user_id, message_text)
     
 app = Flask(__name__)
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
@@ -172,6 +173,9 @@ def send_whatsapp_message(phone, message):
 
 def get_gpt_response(user_msg, user_phone):
     try:
+        # Получаем историю из памяти (файла), 48 часов по умолчанию
+        saved_history_text = get_recent_history(user_phone)
+
         user_data = USER_STATE.get(user_phone, {})
         history = user_data.get("history", [])
         stage = user_data.get("stage", "0")
@@ -179,9 +183,16 @@ def get_gpt_response(user_msg, user_phone):
         prompt = SALES_SCRIPT_PROMPT + "\n\n" + STAGE_PROMPTS.get(stage, "")
 
         messages = [{"role": "system", "content": prompt}]
+
+        # Добавляем сохранённую историю в виде системного контекста (чтобы бот помнил)
+        if saved_history_text:
+            messages.append({"role": "system", "content": "История переписки:\n" + saved_history_text})
+
+        # Добавляем локальную историю сессии (USER_STATE)
         for item in history:
             messages.append({"role": "user", "content": item["user"]})
             messages.append({"role": "assistant", "content": item["bot"]})
+
         messages.append({"role": "user", "content": user_msg})
 
         response = client.chat.completions.create(
@@ -192,6 +203,24 @@ def get_gpt_response(user_msg, user_phone):
         reply = response.choices[0].message.content.strip()
 
         next_stage = str(int(stage) + 1) if int(stage) < 6 else "6"
+
+        USER_STATE[user_phone] = {
+            "history": history[-5:] + [{"user": user_msg, "bot": reply}],
+            "last_message": user_msg,
+            "stage": next_stage,
+            "last_time": time.time(),
+            "followed_up": False
+        }
+
+        # Сохраняем сообщения в файл памяти
+        save_message(user_phone, "client", user_msg)
+        save_message(user_phone, "bot", reply)
+
+        return reply
+
+    except Exception as e:
+        print(f"❌ Ошибка GPT: {e}")
+        return "Произошла ошибка, попробуйте позже."
 
         USER_STATE[user_phone] = {
             "history": history[-5:] + [{"user": user_msg, "bot": reply}],
