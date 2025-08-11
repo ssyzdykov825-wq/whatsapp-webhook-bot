@@ -172,55 +172,34 @@ def send_whatsapp_message(phone, message):
     return response
 
 def get_gpt_response(user_msg, user_phone):
-    try:
-        # Получаем историю из памяти (файла), 48 часов по умолчанию
-        saved_history_text = get_recent_history(user_phone)
+    # Загружаем историю из памяти (например, 20 последних сообщений)
+    history = load_memory(user_phone)  # должно вернуть список сообщений в формате [{"role":..., "content":...}, ...]
 
-        user_data = USER_STATE.get(user_phone, {})
-        history = user_data.get("history", [])
-        stage = user_data.get("stage", "0")
+    # Добавляем текущее сообщение пользователя в историю
+    history.append({"role": "user", "content": user_msg})
 
-        prompt = SALES_SCRIPT_PROMPT + "\n\n" + STAGE_PROMPTS.get(stage, "")
+    # Ограничиваем историю (например, последние 20 сообщений)
+    history = history[-20:]
 
-        messages = [{"role": "system", "content": prompt}]
+    # Формируем системный промпт — например, описание бота и задачи
+    system_prompt = {"role": "system", "content": SALES_SCRIPT_PROMPT}
 
-        # Добавляем сохранённую историю в виде системного контекста (чтобы бот помнил)
-        if saved_history_text:
-            messages.append({"role": "system", "content": "История переписки:\n" + saved_history_text})
+    # Собираем полный массив сообщений для GPT
+    messages = [system_prompt] + history
 
-        # Добавляем локальную историю сессии (USER_STATE)
-        for item in history:
-            messages.append({"role": "user", "content": item["user"]})
-            messages.append({"role": "assistant", "content": item["bot"]})
+    # Запрос к GPT
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=messages,
+        temperature=0.7
+    )
+    reply = response.choices[0].message.content.strip()
 
-        messages.append({"role": "user", "content": user_msg})
+    # Добавляем ответ бота в историю и сохраняем обратно
+    history.append({"role": "assistant", "content": reply})
+    save_memory(user_phone, history)
 
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=messages,
-            temperature=0.7
-        )
-        reply = response.choices[0].message.content.strip()
-
-        next_stage = str(int(stage) + 1) if int(stage) < 6 else "6"
-
-        USER_STATE[user_phone] = {
-            "history": history[-5:] + [{"user": user_msg, "bot": reply}],
-            "last_message": user_msg,
-            "stage": next_stage,
-            "last_time": time.time(),
-            "followed_up": False
-        }
-
-        # Сохраняем сообщения в файл памяти
-        save_message(user_phone, "client", user_msg)
-        save_message(user_phone, "bot", reply)
-
-        return reply
-
-    except Exception as e:
-        print(f"❌ Ошибка GPT: {e}")
-        return "Произошла ошибка, попробуйте позже."
+    return reply
 
         USER_STATE[user_phone] = {
             "history": history[-5:] + [{"user": user_msg, "bot": reply}],
