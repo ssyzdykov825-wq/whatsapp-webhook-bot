@@ -7,7 +7,7 @@ from openai import OpenAI
 from memory import load_memory, save_memory
 
 SALESRENDER_URL = "https://de.backend.salesrender.com/companies/1123/CRM"
-SALESRENDER_TOKEN = "Bearer ТВОЙ_ТОКЕН_ЗДЕСЬ"
+SALESRENDER_TOKEN = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXNyZW5kZXIuY29tLyIsImF1ZCI6IkNSTSIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc"
 
 headers = {
     "Content-Type": "application/json",
