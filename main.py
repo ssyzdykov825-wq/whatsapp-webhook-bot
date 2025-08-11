@@ -123,13 +123,11 @@ def webhook():
         # Берём имя клиента из профиля WhatsApp, если есть
         user_name = msg.get("profile", {}).get("name", "Имя Клиента")
 
-        # Ищем клиента
-        customer_id = find_customer_by_phone(user_phone)
+        # 🚀 ВСЕГДА создаём нового клиента
+        customer_id = create_customer(user_name, user_phone)
         if not customer_id:
-            customer_id = create_customer(user_name, user_phone)
-            if not customer_id:
-                print("Не удалось создать клиента")
-                return jsonify({"status": "error creating customer"}), 500
+            print("Не удалось создать клиента")
+            return jsonify({"status": "error creating customer"}), 500
 
         # Создаём заказ с телефоном и ФИО в полях
         order_id = create_order(customer_id, user_phone, user_name)
@@ -137,7 +135,7 @@ def webhook():
             print("Не удалось создать заказ")
             return jsonify({"status": "error creating order"}), 500
 
-        print(f"✅ Заказ {order_id} создан для клиента {customer_id} ({user_name}, {user_phone})")
+        print(f"✅ ТЕСТ: Заказ {order_id} создан для клиента {customer_id} ({user_name}, {user_phone})")
 
     except Exception as e:
         print(f"❌ Ошибка в webhook: {e}")
