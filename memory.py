@@ -9,6 +9,7 @@ if os.path.exists(MEMORY_FILE):
     with open(MEMORY_FILE, "r", encoding="utf-8") as f:
         try:
             chat_memory = json.load(f)
+            # Конвертируем строки времени обратно в datetime
             for phone in chat_memory:
                 chat_memory[phone] = [
                     (sender, text, datetime.fromisoformat(time_str))
@@ -36,8 +37,28 @@ def save_message(phone, sender, text):
     chat_memory[phone].append((sender, text, now))
     save_to_file()
 
+def load_memory(phone):
+    """Загружает историю в формате GPT (list of dicts)"""
+    if phone not in chat_memory or not chat_memory[phone]:
+        return []
+    raw_msgs = chat_memory[phone][-40:]  # последние 40 сообщений
+    result = []
+    for sender, text, _ in raw_msgs:
+        role = "user" if sender == "client" else "assistant"
+        result.append({"role": role, "content": text})
+    return result
+
+def save_memory(phone, history):
+    """Сохраняет историю из формата GPT в локальное хранилище"""
+    now = datetime.now()
+    chat_memory[phone] = []
+    for msg in history:
+        sender = "client" if msg["role"] == "user" else "assistant"
+        chat_memory[phone].append((sender, msg["content"], now))
+    save_to_file()
+
 def get_recent_history(phone, hours=48):
-    """Возвращает историю, если прошло меньше N часов"""
+    """Возвращает историю в виде строки (если нужна)"""
     if phone not in chat_memory or not chat_memory[phone]:
         return ""
 
