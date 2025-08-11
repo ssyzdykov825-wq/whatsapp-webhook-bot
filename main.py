@@ -127,8 +127,10 @@ def create_order(customer_id, phone, name, project_id, status_id):
             "customerId": customer_id,
             "projectId": "1",
             "statusId": "1",
-            "name": f"Заказ от {name}",
-            "phone": phone
+            "orderData": {
+                "title": f"Заказ от {name}",
+                "description": f"Создан из WhatsApp, телефон: {phone}"
+            }
         }
     }
 
