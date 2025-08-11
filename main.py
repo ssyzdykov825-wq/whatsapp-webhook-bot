@@ -15,18 +15,23 @@ headers = {
 def find_customer_by_phone(phone):
     query = """
     query ($phone: String!) {
-      customersFetcher(filters: { phoneFields: { value: $phone } }) {
-        customers {
-          id
+        customersFetcher(filters: { include: { phone: $phone } }) {
+            id
+            name
+            phone
         }
-      }
     }
     """
     variables = {"phone": phone}
-    response = requests.post(SALESRENDER_URL, json={"query": query, "variables": variables}, headers=headers)
+    response = requests.post(
+        CRM_API_URL,
+        json={"query": query, "variables": variables},
+        headers=HEADERS
+    )
     data = response.json()
     print("🔍 Ответ поиска клиента:", data)
-    customers = data.get("data", {}).get("customersFetcher", {}).get("customers", [])
+
+    customers = data.get("data", {}).get("customersFetcher", [])
     if customers:
         return customers[0]["id"]
     return None
