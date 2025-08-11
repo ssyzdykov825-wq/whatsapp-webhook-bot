@@ -4,7 +4,7 @@ import threading
 import requests
 from flask import Flask, request, jsonify
 from openai import OpenAI
-from memory import load_memory, save_memory, save_message
+from memory import load_memory, save_memory
 
 def handle_manager_message(user_id, message_text):
     # Сохраняем сообщение бота
@@ -172,34 +172,26 @@ def send_whatsapp_message(phone, message):
     return response
 
 def get_gpt_response(user_msg, user_phone):
-    try:
-        # Загружаем историю в формате GPT
-        history = load_memory(user_phone)
+    history = load_memory(user_phone)  # загружаем историю — список dict с role и content
+    history.append({"role": "user", "content": user_msg})
 
-        # Добавляем текущее сообщение пользователя
-        history.append({"role": "user", "content": user_msg})
+    # Ограничиваем историю последних 20 сообщений
+    history = history[-20:]
 
-        # Ограничиваем историю (например, 20 сообщений)
-        history = history[-20:]
+    system_prompt = {"role": "system", "content": SALES_SCRIPT_PROMPT}
+    messages = [system_prompt] + history
 
-        system_prompt = {"role": "system", "content": SALES_SCRIPT_PROMPT}
-        messages = [system_prompt] + history
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=messages,
+        temperature=0.7
+    )
+    reply = response.choices[0].message.content.strip()
 
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=messages,
-            temperature=0.7
-        )
-        reply = response.choices[0].message.content.strip()
+    history.append({"role": "assistant", "content": reply})
+    save_memory(user_phone, history)
 
-        # Добавляем ответ бота и сохраняем всю историю
-        history.append({"role": "assistant", "content": reply})
-        save_memory(user_phone, history)
-
-        return reply
-    except Exception as e:
-        print(f"❌ Ошибка в get_gpt_response: {e}")
-        return "Извините, что-то пошло не так."
+    return reply
 
         USER_STATE[user_phone] = {
             "history": history[-5:] + [{"user": user_msg, "bot": reply}],
