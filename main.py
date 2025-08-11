@@ -110,56 +110,37 @@ def create_customer(name, phone_raw):
     return data["data"]["customerMutation"]["addCustomer"]["id"]
 
 # --- Создание заказа ---
-def create_order(customer_id, phone_raw, full_name, project_id="1", status_id="1"):
-    mutation = """
-    mutation AddOrder($input: AddOrderInput!) {
-      orderMutation {
-        addOrder(input: $input) {
-          id
-        }
+def create_order(customer_id, phone, name, project_id, status_id):
+    query = """
+    mutation CreateOrder($input: CreateOrderInput!) {
+      orderCreate(input: $input) {
+        id
       }
     }
     """
-    phone = format_phone(phone_raw)
-    parts = full_name.strip().split()
-    first_name = parts[0] if parts else ""
-    last_name = " ".join(parts[1:]) if len(parts) > 1 else ""
-
     variables = {
         "input": {
+            "customerId": customer_id,
             "projectId": "1",
             "statusId": "1",
-            "orderData": {
-                "customFields": [
-                    {
-                        "id": "phone",
-                        "value": {
-                            "national": phone["national"],
-                            "international": phone["international"]
-                        }
-                    },
-                    {
-                        "id": "name",
-                        "value": {
-                            "firstName": first_name,
-                            "lastName": last_name
-                        }
-                    }
-                ]
-            },
-            "customerId": customer_id
+            "fields": [
+                {"id": "phone", "value": phone},
+                {"id": "name", "value": name}
+            ]
         }
     }
 
-    resp = requests.post(SALESRENDER_URL, json={"query": mutation, "variables": variables}, headers=headers)
-    try:
-        data = resp.json()
-    except ValueError:
-        print("❌ Невалидный JSON при создании заказа:", resp.text)
-        return None
+    resp = requests.post(API_URL, json={"query": query, "variables": variables}, headers=HEADERS)
+    data = resp.json()
+
+    # Отладочный вывод
+    print("📡 Полный ответ GraphQL:", json.dumps(data, ensure_ascii=False, indent=2))
+
     if "errors" in data:
+        print("❌ Ошибка при создании заказа:", data["errors"])
         return None
-    return data["data"]["orderMutation"]["addOrder"]["id"]
+
+    return data.get("data", {}).get("orderCreate", {}).get("id")
 
 # --- Обработка вебхука ---
 @app.route('/webhook', methods=['POST'])
