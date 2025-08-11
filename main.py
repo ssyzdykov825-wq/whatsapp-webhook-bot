@@ -380,7 +380,7 @@ def process_salesrender_order(order):
             print(f"⚠ Повторный недозвон по {phone} — пропускаем")
             return
 
-        # Определяем приветствие по времени в Казахстане
+        # Определяем приветствие (UTC+6)
         now_kz = now + timedelta(hours=6)
         if 5 <= now_kz.hour < 12:
             greeting = "Қайырлы таң"
@@ -389,23 +389,37 @@ def process_salesrender_order(order):
         else:
             greeting = "Қайырлы кеш"
 
-        # Генерация текста сообщения на основе имени клиента
-        if name:
-            message_text = (
-                f"{greeting}! Клиенттің аты {name}. "
-                f"Оған қоңырау шалдық, бірақ байланыс болмады. "
-                f"Healvix орталығынан Айдос хабарласып жатыр. "
-                f"Қысқа, жылы және достық хабарламаны WhatsApp-та жіберіңіз."
-            )
-        else:
-            message_text = (
-                f"{greeting}! Біз сізге қоңырау шалдық, бірақ байланыс болмады. "
-                f"Healvix орталығынан Айдос хабарласып жатыр. "
-                f"Қысқа, жылы және достық хабарламаны WhatsApp-та жіберіңіз."
-            )
+        # Генерация сообщения через GPT
+        try:
+            if name:
+                prompt = (
+                    f"{greeting}! Клиенттің аты {name}. "
+                    f"Оған қоңырау шалдық, бірақ байланыс болмады. "
+                    f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
+                    f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз."
+                )
+            else:
+                prompt = (
+                    f"{greeting}! Біз клиентке қоңырау шалдық, бірақ байланыс болмады. "
+                    f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
+                    f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз. "
+                    f"Есімін қолданбаңыз."
+                )
 
-        # Отправляем сообщение
+            gpt_response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7
+            )
+            message_text = gpt_response.choices[0].message.content.strip()
+        except Exception as e:
+            print(f"❌ GPT қатесі: {e}")
+            message_text = f"{greeting}! Біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
+
+        # Отправляем в WhatsApp (твоя функция)
         handle_manager_message(phone, message_text)
+
+        # Запоминаем отправку
         last_sent[phone] = now
         print(f"✅ Сообщение отправлено на {phone}")
 
