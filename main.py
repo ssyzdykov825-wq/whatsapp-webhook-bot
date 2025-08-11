@@ -15,16 +15,19 @@ headers = {
 def find_customer_by_phone(phone):
     query = """
     query ($phone: String!) {
-        customersFetcher(filter: { phone: $phone }) {
-            customers {
-                id
-                name {
-                    firstName
-                    lastName
-                }
-                phone
-            }
+      customersFetcher(filters: { include: { phone: $phone } }) {
+        customers {
+          id
+          name {
+            firstName
+            lastName
+          }
+          phone {
+            national
+            international
+          }
         }
+      }
     }
     """
     variables = {"phone": phone}
