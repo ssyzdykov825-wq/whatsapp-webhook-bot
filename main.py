@@ -5,6 +5,7 @@ import json
 
 app = Flask(__name__)
 
+# --- Конфиг ---
 SALESRENDER_URL = "https://de.backend.salesrender.com/companies/1123/CRM"
 SALESRENDER_TOKEN = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXNyZW5kZXIuY29tLyIsImF1ZCI6IkNSTSIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc"
 
@@ -30,7 +31,7 @@ def format_phone(phone_raw):
         national = digits
     return {"international": international, "national": national}
 
-# --- Поиск клиента по телефону ---
+# --- Поиск клиента ---
 def find_customer_by_phone(phone):
     q = """
     query ($phone: String!) {
@@ -113,9 +114,11 @@ def create_customer(name, phone_raw):
 # --- Создание заказа ---
 def create_order(customer_id, phone, name, project_id, status_id):
     query = """
-    mutation CreateOrder($input: CreateOrderInput!) {
-      orderCreate(input: $input) {
-        id
+    mutation AddOrder($input: AddOrderInput!) {
+      orderMutation {
+        addOrder(input: $input) {
+          id
+        }
       }
     }
     """
@@ -124,10 +127,8 @@ def create_order(customer_id, phone, name, project_id, status_id):
             "customerId": customer_id,
             "projectId": "1",
             "statusId": "1",
-            "fields": [
-                {"id": "phone", "value": phone},
-                {"id": "name", "value": name}
-            ]
+            "name": f"Заказ от {name}",
+            "phone": phone
         }
     }
 
@@ -138,19 +139,19 @@ def create_order(customer_id, phone, name, project_id, status_id):
         print("❌ Невалидный JSON при создании заказа:", resp.text)
         return None
 
-    print("📡 Полный ответ GraphQL:", json.dumps(data, ensure_ascii=False, indent=2))
+    print("📡 Ответ GraphQL при создании заказа:", json.dumps(data, ensure_ascii=False, indent=2))
 
     if "errors" in data:
         print("❌ Ошибка при создании заказа:", data["errors"])
         return None
 
-    return data.get("data", {}).get("orderCreate", {}).get("id")
+    return data.get("data", {}).get("orderMutation", {}).get("addOrder", {}).get("id")
 
 # --- Обработка вебхука ---
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
-    print("📩 Входящий вебхук:", json.dumps(data, ensure_ascii=False))
+    print("📩 Входящий вебхук:", data)
 
     try:
         messages = data["entry"][0]["changes"][0]["value"].get("messages")
@@ -159,13 +160,8 @@ def webhook():
 
         msg = messages[0]
         raw_from = msg.get("from")
-        # Имя может быть в contacts или в messages
-        user_name = None
-        if "contacts" in data["entry"][0]["changes"][0]["value"]:
-            user_name = data["entry"][0]["changes"][0]["value"]["contacts"][0]["profile"].get("name")
-        if not user_name:
-            user_name = msg.get("profile", {}).get("name", "Имя Клиента")
-
+        profile_info = data["entry"][0]["changes"][0]["value"].get("contacts", [{}])[0].get("profile", {})
+        user_name = profile_info.get("name", "Имя Клиента")
         user_phone = raw_from
 
         customer_id = find_customer_by_phone(user_phone)
