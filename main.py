@@ -1,6 +1,7 @@
 import requests
 from flask import Flask, request, jsonify
 import uuid
+import json
 
 app = Flask(__name__)
 
@@ -130,10 +131,13 @@ def create_order(customer_id, phone, name, project_id, status_id):
         }
     }
 
-    resp = requests.post(API_URL, json={"query": query, "variables": variables}, headers=HEADERS)
-    data = resp.json()
+    resp = requests.post(SALESRENDER_URL, json={"query": query, "variables": variables}, headers=headers)
+    try:
+        data = resp.json()
+    except ValueError:
+        print("❌ Невалидный JSON при создании заказа:", resp.text)
+        return None
 
-    # Отладочный вывод
     print("📡 Полный ответ GraphQL:", json.dumps(data, ensure_ascii=False, indent=2))
 
     if "errors" in data:
@@ -146,7 +150,7 @@ def create_order(customer_id, phone, name, project_id, status_id):
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
-    print("📩 Входящий вебхук:", data)  # 1 — печатаем всё, что пришло
+    print("📩 Входящий вебхук:", json.dumps(data, ensure_ascii=False))
 
     try:
         messages = data["entry"][0]["changes"][0]["value"].get("messages")
@@ -155,7 +159,13 @@ def webhook():
 
         msg = messages[0]
         raw_from = msg.get("from")
-        user_name = msg.get("profile", {}).get("name", "Имя Клиента")
+        # Имя может быть в contacts или в messages
+        user_name = None
+        if "contacts" in data["entry"][0]["changes"][0]["value"]:
+            user_name = data["entry"][0]["changes"][0]["value"]["contacts"][0]["profile"].get("name")
+        if not user_name:
+            user_name = msg.get("profile", {}).get("name", "Имя Клиента")
+
         user_phone = raw_from
 
         customer_id = find_customer_by_phone(user_phone)
@@ -178,7 +188,7 @@ def webhook():
 
     except Exception as e:
         import traceback
-        traceback.print_exc()  # 2 — печатаем стек ошибки
+        traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)}), 500
 
     return jsonify({"status": "ok"}), 200
