@@ -6,6 +6,84 @@ from flask import Flask, request, jsonify
 from openai import OpenAI
 from memory import load_memory, save_memory
 
+SALESRENDER_URL = "https://de.backend.salesrender.com/companies/1123/CRM"
+SALESRENDER_TOKEN = "Bearer ТВОЙ_ТОКЕН_ЗДЕСЬ"
+
+headers = {
+    "Content-Type": "application/json",
+    "Authorization": SALESRENDER_TOKEN
+}
+
+def create_customer(phone, first_name, last_name):
+    query = """
+    mutation {
+      customerMutation {
+        addCustomer(input: {
+          projectId: "1",
+          customerData: {
+            phoneFields: [{ value: "%s" }],
+            humanNameFields: [{ value: { firstName: "%s", lastName: "%s" } }]
+          }
+        }) {
+          id
+        }
+      }
+    }
+    """ % (phone, first_name, last_name)
+    
+    response = requests.post(SALESRENDER_URL, headers=headers, json={"query": query})
+    data = response.json()
+    if "errors" in data:
+        print("Ошибка при создании клиента:", data["errors"])
+        return None
+    return data.get("data", {}).get("customerMutation", {}).get("addCustomer", {}).get("id")
+
+def create_order(customer_id, phone):
+    query = """
+    mutation {
+      orderMutation {
+        addOrder(input: {
+          projectId: "1",
+          statusId: "1",
+          customerId: "%s",
+          orderData: {
+            phoneFields: [{ value: "%s" }]
+          }
+        }) {
+          id
+          status {
+            name
+          }
+        }
+      }
+    }
+    """ % (customer_id, phone)
+    
+    response = requests.post(SALESRENDER_URL, headers=headers, json={"query": query})
+    data = response.json()
+    if "errors" in data:
+        print("Ошибка при создании заказа:", data["errors"])
+        return None
+    return data.get("data", {}).get("orderMutation", {}).get("addOrder")
+
+if __name__ == "__main__":
+    phone = "+77001234567"
+    first_name = "Иван"
+    last_name = "Иванов"
+
+    print("Создаём клиента...")
+    cust_id = create_customer(phone, first_name, last_name)
+    if cust_id:
+        print("Клиент создан с ID:", cust_id)
+        print("Создаём заказ...")
+        order = create_order(cust_id, phone)
+        if order:
+            print("Заказ создан:", order)
+        else:
+            print("Не удалось создать заказ.")
+    else:
+        print("Не удалось создать клиента.")
+
 def handle_manager_message(user_id, message_text):
     # Сохраняем сообщение бота
     save_message(user_id, "bot", message_text)
