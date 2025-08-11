@@ -94,6 +94,11 @@ def create_order(customer_id, phone):
         return None
     return data["data"]["orderMutation"]["addOrder"]["id"]
 
+def format_phone(phone):
+    if not phone.startswith("+"):
+        return "+" + phone
+    return phone
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
@@ -103,20 +108,19 @@ def webhook():
             return jsonify({"status": "no messages"}), 200
         
         msg = messages[0]
-        user_phone = msg["from"]
-        user_name = "Имя Клиента"  # Можно вытянуть из msg, если есть
+        raw_phone = msg["from"]
+        user_phone = format_phone(raw_phone)
+        user_name = "Имя Клиента"  # если есть в данных — вытягивай, иначе заглушка
         
-        # Проверяем, есть ли клиент в CRM
+        # Проверяем клиента
         customer_id = find_customer_by_phone(user_phone)
         
-        # Если нет — создаём клиента
         if not customer_id:
             customer_id = create_customer(user_name, user_phone)
             if not customer_id:
                 print("Не удалось создать клиента")
                 return jsonify({"status": "error creating customer"}), 500
         
-        # Создаём заказ
         order_id = create_order(customer_id, user_phone)
         if not order_id:
             print("Не удалось создать заказ")
