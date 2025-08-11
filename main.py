@@ -1,5 +1,6 @@
 import requests
 from flask import Flask, request, jsonify
+import uuid
 
 app = Flask(__name__)
 
@@ -41,6 +42,10 @@ def create_customer(name, phone):
     """
     first_name = name.split()[0] if name else "Имя"
     last_name = " ".join(name.split()[1:]) if name and len(name.split()) > 1 else "Фамилия"
+
+        # Генерируем уникальный email
+    unique_email = f"user_{uuid.uuid4().hex[:8]}@example.com"
+    
     variables = {
         "input": {
             "email": unique_email,
