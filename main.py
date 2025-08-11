@@ -265,8 +265,8 @@ from datetime import datetime, timedelta
 SALESRENDER_URL = "https://de.backend.salesrender.com/companies/1123/CRM"
 SALESRENDER_TOKEN = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXNyZW5kZXIuY29tLyIsImF1ZCI6IkNSTSIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc"
 
-WHATSAPP_API_URL = "https://waba.360dialog.io/v1/messages"
-WHATSAPP_TOKEN = os.environ.get("WHATSAPP_TOKEN")  # токен из переменных окружения
+WHATSAPP_API_URL = "https://waba-v2.360dialog.io/messages"
+WHATSAPP_API_KEY = os.environ.get("WHATSAPP_API_KEY")
 
 # Хранилище для защиты от повторов
 last_sent = {}
@@ -277,18 +277,24 @@ def handle_manager_message(phone, text):
     Отправка сообщения в WhatsApp через 360dialog API.
     """
     try:
-        headers = {
-            "Content-Type": "application/json",
-            "D360-API-KEY": WHATSAPP_TOKEN
-        }
         payload = {
             "to": phone,
             "type": "text",
             "text": {"body": text}
         }
-        response = requests.post(WHATSAPP_API_URL, headers=headers, json=payload, timeout=10)
+        print(f"[DEBUG] Отправка в WhatsApp: {phone} → {text}")
+        print(f"[DEBUG] Payload: {payload}")
+
+        response = requests.post(
+            WHATSAPP_API_URL,
+            headers=HEADERS,
+            json=payload,
+            timeout=10
+        )
+        print(f"[DEBUG] Ответ WhatsApp API: {response.status_code} {response.text}")
+
         response.raise_for_status()
-        print(f"✅ Сообщение отправлено на {phone}")
+        print(f"✅ Сообщение успешно отправлено на {phone}")
     except Exception as e:
         print(f"❌ Ошибка отправки WhatsApp: {e}")
 
