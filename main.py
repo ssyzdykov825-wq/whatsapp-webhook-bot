@@ -193,13 +193,13 @@ def get_gpt_response(user_msg, user_phone):
 
     return reply
 
-        USER_STATE[user_phone] = {
+    USER_STATE[user_phone] = {
             "history": history[-5:] + [{"user": user_msg, "bot": reply}],
             "last_message": user_msg,
             "stage": next_stage,
             "last_time": time.time(),
             "followed_up": False
-        }
+    }
 
         return reply
     except Exception as e:
