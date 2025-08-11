@@ -4,7 +4,7 @@ import threading
 import requests
 from flask import Flask, request, jsonify
 from openai import OpenAI
-from memory import save_message, get_recent_history
+from memory import load_memory, save_memory, save_message
 
 def handle_manager_message(user_id, message_text):
     # Сохраняем сообщение бота
@@ -172,22 +172,18 @@ def send_whatsapp_message(phone, message):
     return response
 
 def get_gpt_response(user_msg, user_phone):
-    # Загружаем историю из памяти (например, 20 последних сообщений)
-    history = load_memory(user_phone)  # должно вернуть список сообщений в формате [{"role":..., "content":...}, ...]
+    # Загружаем историю в формате GPT
+    history = load_memory(user_phone)
 
-    # Добавляем текущее сообщение пользователя в историю
+    # Добавляем текущее сообщение пользователя
     history.append({"role": "user", "content": user_msg})
 
-    # Ограничиваем историю (например, последние 20 сообщений)
+    # Ограничиваем историю (например, 20 сообщений)
     history = history[-20:]
 
-    # Формируем системный промпт — например, описание бота и задачи
     system_prompt = {"role": "system", "content": SALES_SCRIPT_PROMPT}
-
-    # Собираем полный массив сообщений для GPT
     messages = [system_prompt] + history
 
-    # Запрос к GPT
     response = client.chat.completions.create(
         model="gpt-4o",
         messages=messages,
@@ -195,7 +191,7 @@ def get_gpt_response(user_msg, user_phone):
     )
     reply = response.choices[0].message.content.strip()
 
-    # Добавляем ответ бота в историю и сохраняем обратно
+    # Добавляем ответ бота и сохраняем всю историю
     history.append({"role": "assistant", "content": reply})
     save_memory(user_phone, history)
 
