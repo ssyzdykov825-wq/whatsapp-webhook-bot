@@ -97,13 +97,14 @@ def get_order_form_fields(project_id):
       }
     }
     """
-    resp = requests.post(SALESRENDER_URL, json={"query": query, "variables": {"projectId": project_id}}, headers=headers)
-    try:
-        data = resp.json()
-    except ValueError:
-        print("❌ Ошибка получения формы заказа:", resp.text)
-        return None
-    return data.get("data", {}).get("orderFormFetcher", {}).get("fields", [])
+resp = requests.post(SALESRENDER_URL, json={"query": query, "variables": {"projectId": project_id}}, headers=headers)
+try:
+    data = resp.json()
+    print("DEBUG: Ответ get_order_form_fields:", json.dumps(data, ensure_ascii=False, indent=2))
+except ValueError:
+    print("❌ Ошибка получения формы заказа:", resp.text)
+    return None
+return data.get("data", {}).get("orderFormFetcher", {}).get("fields", [])
 
 # --- Создание заказа ---
 def create_order(customer_id, phone, name, project_id="1", status_id="1"):
