@@ -15,8 +15,8 @@ headers = {
 def find_customer_by_phone(phone):
     query = """
     query ($phone: String!) {
-        customersFetcher(filters: { include: { phone: $phone } }) {
-            items {
+        customersFetcher(filter: { phone: $phone }) {
+            customers {
                 id
                 name {
                     firstName
@@ -36,7 +36,7 @@ def find_customer_by_phone(phone):
     data = response.json()
     print("🔍 Ответ поиска клиента:", data)
 
-    customers = data.get("data", {}).get("customersFetcher", {}).get("items", [])
+    customers = data.get("data", {}).get("customersFetcher", {}).get("customers", [])
     if customers:
         return customers[0]["id"]
     return None
