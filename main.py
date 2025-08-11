@@ -268,9 +268,7 @@ SALESRENDER_TOKEN = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHR
 # Хранилище для защиты от повторов
 last_sent = {}
 
-# ==== Заглушка отправки в WhatsApp ====
-def handle_manager_message(phone, message_text):
-    print(f"[DEBUG] Сообщение для {phone}:\n{message_text}\n")
+def handle_manager_message(phone, text):
 
 # ==== Функция запроса в CRM ====
 def fetch_order_from_crm(order_id):
