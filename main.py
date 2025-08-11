@@ -265,9 +265,13 @@ from datetime import datetime, timedelta
 SALESRENDER_URL = "https://de.backend.salesrender.com/companies/1123/CRM"
 SALESRENDER_TOKEN = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXNyZW5kZXIuY29tLyIsImF1ZCI6IkNSTSIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc"
 
+WHATSAPP_API_URL = "https://waba.360dialog.io/v1/messages"
+WHATSAPP_TOKEN = os.environ.get("WHATSAPP_TOKEN")  # токен из переменных окружения
+
 # Хранилище для защиты от повторов
 last_sent = {}
 
+# ==== Отправка сообщения в WhatsApp ====
 def handle_manager_message(phone, text):
     """
     Отправка сообщения в WhatsApp через 360dialog API.
@@ -330,13 +334,6 @@ def fetch_order_from_crm(order_id):
         return None
 
 # ==== Основная логика ====
-def handle_manager_message(phone, text):
-    """
-    Временная заглушка для отправки в WhatsApp.
-    Вместо реальной отправки просто логируем в консоль.
-    """
-    print(f"[DEBUG] Отправка в WhatsApp: {phone} → {text}")
-        
 def process_salesrender_order(order):
     try:
         if not order.get("customer") and "id" in order:
