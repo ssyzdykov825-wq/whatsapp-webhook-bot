@@ -73,6 +73,7 @@ def create_order(customer_id, phone):
           status {
             name
           }
+          phone
         }
       }
     }
@@ -81,10 +82,8 @@ def create_order(customer_id, phone):
         "input": {
             "projectId": "1",
             "statusId": "1",
-            "orderData": {
-                "phoneFields": [{"value": phone}]
-            },
-            "customerId": customer_id
+            "customerId": customer_id,
+            "phone": phone
         }
     }
     response = requests.post(SALESRENDER_URL, json={"query": mutation, "variables": variables}, headers=headers)
