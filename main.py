@@ -172,30 +172,31 @@ def send_whatsapp_message(phone, message):
     return response
 
 def get_gpt_response(user_msg, user_phone):
-    # Загружаем историю в формате GPT
-    history = load_memory(user_phone)
+    try:
+        # Загружаем историю в формате GPT
+        history = load_memory(user_phone)
 
-    # Добавляем текущее сообщение пользователя
-    history.append({"role": "user", "content": user_msg})
+        # Добавляем текущее сообщение пользователя
+        history.append({"role": "user", "content": user_msg})
 
-    # Ограничиваем историю (например, 20 сообщений)
-    history = history[-20:]
+        # Ограничиваем историю (например, 20 сообщений)
+        history = history[-20:]
 
-    system_prompt = {"role": "system", "content": SALES_SCRIPT_PROMPT}
-    messages = [system_prompt] + history
+        system_prompt = {"role": "system", "content": SALES_SCRIPT_PROMPT}
+        messages = [system_prompt] + history
 
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=messages,
-        temperature=0.7
-    )
-    reply = response.choices[0].message.content.strip()
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=messages,
+            temperature=0.7
+        )
+        reply = response.choices[0].message.content.strip()
 
-    # Добавляем ответ бота и сохраняем всю историю
-    history.append({"role": "assistant", "content": reply})
-    save_memory(user_phone, history)
+        # Добавляем ответ бота и сохраняем всю историю
+        history.append({"role": "assistant", "content": reply})
+        save_memory(user_phone, history)
 
-    return reply
+        return reply
     except Exception as e:
         print(f"❌ Ошибка в get_gpt_response: {e}")
         return "Извините, что-то пошло не так."
