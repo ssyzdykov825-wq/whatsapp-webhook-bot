@@ -269,6 +269,24 @@ SALESRENDER_TOKEN = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHR
 last_sent = {}
 
 def handle_manager_message(phone, text):
+    """
+    Отправка сообщения в WhatsApp через 360dialog API.
+    """
+    try:
+        headers = {
+            "Content-Type": "application/json",
+            "D360-API-KEY": WHATSAPP_TOKEN
+        }
+        payload = {
+            "to": phone,
+            "type": "text",
+            "text": {"body": text}
+        }
+        response = requests.post(WHATSAPP_API_URL, headers=headers, json=payload, timeout=10)
+        response.raise_for_status()
+        print(f"✅ Сообщение отправлено на {phone}")
+    except Exception as e:
+        print(f"❌ Ошибка отправки WhatsApp: {e}")
 
 # ==== Функция запроса в CRM ====
 def fetch_order_from_crm(order_id):
