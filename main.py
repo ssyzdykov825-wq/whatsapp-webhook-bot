@@ -400,42 +400,29 @@ def process_salesrender_order(order):
                     f"Есімін қолданбаңыз."
                 )
 
-            # Тут можно снова включить GPT, если нужно
-            message_text = f"{greeting}! Бұл тесттік хабарлама."
+            # Генерация текста через GPT
+            completion = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "Сіз тәжірибелі клиенттік менеджерсіз."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=200
+            )
+
+            message_text = completion.choices[0].message.content.strip()
+
         except Exception as e:
             print(f"❌ GPT қатесі: {e}")
-            message_text = f"{greeting}! Біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
+            message_text = (
+                f"{greeting}! Біз сізге қоңырау шалдық, бірақ байланыс болмады. "
+                f"Уақытыңыз болса, хабарласыңыз."
+            )
 
         handle_manager_message(phone, message_text)
 
         last_sent[phone] = now
         print(f"✅ Сообщение отправлено на {phone}")
-
-    except Exception as e:
-        print(f"❌ Ошибка обработки заказа: {e}")
-
-# ==== Вебхук ====
-@app.route('/salesrender-hook', methods=['POST'])
-def salesrender_hook():
-    print("=== Входящий запрос в /salesrender-hook ===")
-    try:
-        data = request.get_json()
-        print("Payload:", data)
-
-        orders = (
-            data.get("data", {}).get("orders")
-            or data.get("orders")
-            or [data]
-        )
-
-        if not orders or not isinstance(orders, list):
-            return jsonify({"error": "Нет заказов"}), 400
-
-        threading.Thread(target=process_salesrender_order, args=(orders[0],), daemon=True).start()
-        return jsonify({"status": "accepted"}), 200
-    except Exception as e:
-        print(f"❌ Ошибка парсинга вебхука: {e}")
-        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
