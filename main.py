@@ -338,9 +338,11 @@ def fetch_order_from_crm(order_id):
         print(f"❌ Ошибка запроса в CRM API: {e}")
         return None
 
+
 # ==== Основная логика ====
 def process_salesrender_order(order):
     try:
+        # Если customer пустой, пытаемся подтянуть из CRM
         if not order.get("customer") and "id" in order:
             print(f"⚠ customer пуст, подтягиваю из CRM по ID {order['id']}")
             full_order = fetch_order_from_crm(order["id"])
@@ -352,6 +354,7 @@ def process_salesrender_order(order):
 
         first_name = ""
         last_name = ""
+        phone = ""
 
         if "customer" in order:
             first_name = order.get("customer", {}).get("name", {}).get("firstName", "").strip()
@@ -363,7 +366,8 @@ def process_salesrender_order(order):
             if human_fields:
                 first_name = human_fields[0].get("value", {}).get("firstName", "").strip()
                 last_name = human_fields[0].get("value", {}).get("lastName", "").strip()
-            phone = phone_fields[0].get("value", {}).get("international", "").strip() if phone_fields else ""
+            if phone_fields:
+                phone = phone_fields[0].get("value", {}).get("international", "").strip()
 
         name = f"{first_name} {last_name}".strip()
 
@@ -376,42 +380,41 @@ def process_salesrender_order(order):
             print(f"⚠ Повторный недозвон по {phone} — пропускаем")
             return
 
-try:
-    now = datetime.utcnow()
-    if phone in last_sent and now - last_sent[phone] < timedelta(minutes=3):
-        print(f"⚠ Повторный недозвон по {phone} — пропускаем")
-        return
+        # Определяем приветствие по времени в Казахстане
+        now_kz = now + timedelta(hours=6)
+        if 5 <= now_kz.hour < 12:
+            greeting = "Қайырлы таң"
+        elif 12 <= now_kz.hour < 18:
+            greeting = "Сәлеметсіз бе"
+        else:
+            greeting = "Қайырлы кеш"
 
-    now_kz = now + timedelta(hours=6)
-    if 5 <= now_kz.hour < 12:
-        greeting = "Қайырлы таң"
-    elif 12 <= now_kz.hour < 18:
-        greeting = "Сәлеметсіз бе"
-    else:
-        greeting = "Қайырлы кеш"
+        # Генерация текста
+        if name:
+            prompt = (
+                f"{greeting}! Клиенттің аты {name}. "
+                f"Оған қоңырау шалдық, бірақ байланыс болмады. "
+                f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
+                f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз."
+            )
+        else:
+            prompt = (
+                f"{greeting}! Біз клиентке қоңырау шалдық, бірақ байланыс болмады. "
+                f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
+                f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз. "
+                f"Есімін қолданбаңыз."
+            )
 
-    if name:
-        prompt = (
-            f"{greeting}! Клиенттің аты {name}. "
-            f"Оған қоңырау шалдық, бірақ байланыс болмады. "
-            f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
-            f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз."
-        )
-    else:
-        prompt = (
-            f"{greeting}! Біз клиентке қоңырау шалдық, бірақ байланыс болмады. "
-            f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
-            f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз. "
-            f"Есімін қолданбаңыз."
-        )
+        # Пока тестовый текст
+        message_text = f"{greeting}! Бұл тесттік хабарлама."
 
-    message_text = f"{greeting}! Бұл тесттік хабарлама."
-    handle_manager_message(phone, message_text)
-    last_sent[phone] = now
-    print(f"✅ Сообщение отправлено на {phone}")
+        # Отправляем
+        handle_manager_message(phone, message_text)
+        last_sent[phone] = now
+        print(f"✅ Сообщение отправлено на {phone}")
 
-except Exception as e:
-    print(f"❌ Ошибка обработки заказа: {e}")
+    except Exception as e:
+        print(f"❌ Ошибка обработки заказа: {e}")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
