@@ -29,7 +29,7 @@ def find_customer_by_phone(phone):
         return customers[0]["id"]
     return None
 
-def create_customer(name, phone, email="client@example.com", password="StrongPass123"):
+def create_customer(name, phone):
     mutation = """
     mutation AddCustomer($input: AddCustomerInput!) {
       customerMutation {
@@ -43,15 +43,16 @@ def create_customer(name, phone, email="client@example.com", password="StrongPas
     last_name = " ".join(name.split()[1:]) if name and len(name.split()) > 1 else "Фамилия"
     variables = {
         "input": {
-            "email": email,
-            "password": password,
+            "email": f"{phone}@example.com",  # Заглушка для email
+            "password": "ChangeMe123!",      # Заглушка для пароля
             "name": {
                 "firstName": first_name,
                 "lastName": last_name
             },
             "locale": {
-                "language": "ru",
-                "country": "RU"
+                "language": "ru_RU",
+                "currency": "KZT",
+                "timezone": "Asia/Almaty"
             },
             "phone": phone
         }
@@ -79,7 +80,7 @@ def create_order(customer_id, phone):
     variables = {
         "input": {
             "projectId": "1",
-            "statusId": "1",
+            "statusId": "1",  # статус «Обработка»
             "orderData": {
                 "phoneFields": [{"value": phone}]
             },
@@ -100,30 +101,31 @@ def webhook():
         messages = data["entry"][0]["changes"][0]["value"].get("messages")
         if not messages:
             return jsonify({"status": "no messages"}), 200
-
+        
         msg = messages[0]
-        user_phone_raw = msg["from"]
-        # Приводим телефон к формату E.164 с плюсом
-        user_phone = user_phone_raw if user_phone_raw.startswith('+') else '+' + user_phone_raw
-        user_name = "Клиент"  # если есть имя из WhatsApp — подставь сюда
-
+        user_phone = msg["from"]
+        user_name = "Имя Клиента"  # Можно вытянуть из msg, если есть
+        
+        # Проверяем, есть ли клиент в CRM
         customer_id = find_customer_by_phone(user_phone)
+        
+        # Если нет — создаём клиента
         if not customer_id:
             customer_id = create_customer(user_name, user_phone)
             if not customer_id:
                 print("Не удалось создать клиента")
                 return jsonify({"status": "error creating customer"}), 500
-
+        
+        # Создаём заказ
         order_id = create_order(customer_id, user_phone)
         if not order_id:
             print("Не удалось создать заказ")
             return jsonify({"status": "error creating order"}), 500
-
+        
         print(f"✅ Заказ создан с ID {order_id} для клиента {customer_id}")
-
     except Exception as e:
         print(f"❌ Ошибка в webhook: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error"}), 500
 
     return jsonify({"status": "ok"}), 200
 
