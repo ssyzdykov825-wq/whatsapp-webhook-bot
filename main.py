@@ -27,7 +27,7 @@ def format_phone(phone_raw):
 
 # --- Поиск клиента ---
 def find_customer_by_phone(phone):
-    q = """
+    query = """
     query ($phone: String!) {
       customersFetcher(filters: { include: { phone: $phone } }) {
         customers {
@@ -41,7 +41,7 @@ def find_customer_by_phone(phone):
     ph = format_phone(phone)
     for phone_variant in (ph["international"], ph["national"]):
         variables = {"phone": phone_variant}
-        resp = requests.post(SALESRENDER_URL, json={"query": q, "variables": variables}, headers=headers)
+        resp = requests.post(SALESRENDER_URL, json={"query": query, "variables": variables}, headers=headers)
         try:
             data = resp.json()
         except ValueError:
@@ -82,29 +82,34 @@ def create_customer(name, phone_raw):
         return None
 
     if "errors" in data:
+        # Если телефон уже используется, пытаемся найти клиента
         if any(err.get("extensions", {}).get("code") == "ERR_CUSTOMER_PHONE_ALREADY_USED" for err in data["errors"]):
             return find_customer_by_phone(phone_raw)
         return None
 
     return data["data"]["customerMutation"]["addCustomer"]["id"]
 
-# --- Получение ID полей формы заказа ---
+# --- Получение полей формы заказа ---
 def get_order_form_fields(project_id):
     query = """
-    query GetOrderForm($projectId: ID!) {
-      orderFormFetcher(projectId: $projectId) {
-        fields { id name type }
+    query GetOrderFields {
+      orderFieldsFetcher {
+        fields {
+          id
+          label
+          __typename
+        }
       }
     }
     """
-    resp = requests.post(SALESRENDER_URL, json={"query": query, "variables": {"projectId": project_id}}, headers=headers)
+    resp = requests.post(SALESRENDER_URL, json={"query": query}, headers=headers)
     try:
         data = resp.json()
         print("DEBUG: Ответ get_order_form_fields:", json.dumps(data, ensure_ascii=False, indent=2))
     except ValueError:
         print("❌ Ошибка получения формы заказа:", resp.text)
         return None
-    return data.get("data", {}).get("orderFormFetcher", {}).get("fields", [])
+    return data.get("data", {}).get("orderFieldsFetcher", {}).get("fields", [])
 
 # --- Создание заказа ---
 def create_order(customer_id, phone, name, project_id="1", status_id="1"):
@@ -113,8 +118,9 @@ def create_order(customer_id, phone, name, project_id="1", status_id="1"):
         print("❌ Нет полей формы заказа")
         return None
 
-    name_field = next((f for f in fields if "имя" in f["name"].lower()), None)
-    phone_field = next((f for f in fields if "тел" in f["name"].lower()), None)
+    # Ищем поля по метке (label) — на русском
+    name_field = next((f for f in fields if "фио" in f["label"].lower() or "имя" in f["label"].lower()), None)
+    phone_field = next((f for f in fields if "тел" in f["label"].lower()), None)
 
     if not name_field or not phone_field:
         print("❌ Не удалось найти поля для имени и телефона")
@@ -127,6 +133,7 @@ def create_order(customer_id, phone, name, project_id="1", status_id="1"):
       }
     }
     """
+
     variables = {
         "input": {
             "customerId": customer_id,
