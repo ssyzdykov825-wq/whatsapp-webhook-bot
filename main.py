@@ -196,6 +196,9 @@ def get_gpt_response(user_msg, user_phone):
     save_memory(user_phone, history)
 
     return reply
+    except Exception as e:
+        print(f"❌ Ошибка в get_gpt_response: {e}")
+        return "Извините, что-то пошло не так."
 
         USER_STATE[user_phone] = {
             "history": history[-5:] + [{"user": user_msg, "bot": reply}],
