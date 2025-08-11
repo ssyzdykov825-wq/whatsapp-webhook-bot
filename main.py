@@ -6,10 +6,7 @@ from flask import Flask, request, jsonify
 from openai import OpenAI
 from memory import load_memory, save_memory
 
-from flask import Flask, request, jsonify
 import requests
-
-app = Flask(__name__)
 
 SALESRENDER_URL = "https://de.backend.salesrender.com/companies/1123/CRM"
 SALESRENDER_TOKEN = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXNyZW5kZXIuY29tLyIsImF1ZCI6IkNSTSIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc"
@@ -19,26 +16,86 @@ headers = {
     "Authorization": SALESRENDER_TOKEN
 }
 
-@app.route('/test', methods=['GET'])
-def test():
+def find_customer_by_phone(phone):
     query = """
-    query {
-      projectsFetcher {
-        projects {
+    query ($phone: String!) {
+      customersFetcher(filters: { phoneFields: { eq: $phone } }) {
+        customers {
           id
-          name
+          firstName
+          lastName
         }
       }
     }
     """
-    response = requests.post(SALESRENDER_URL, headers=headers, json={"query": query})
-    print("Status code:", response.status_code)
-    print("Response:", response.text)
-    return jsonify({"status": response.status_code, "data": response.json()})
+    variables = {"phone": phone}
+    response = requests.post(SALESRENDER_URL, headers=headers, json={"query": query, "variables": variables})
+    data = response.json()
+    customers = data.get("data", {}).get("customersFetcher", {}).get("customers", [])
+    if customers:
+        return customers[0]["id"]
+    return None
 
+def create_customer(first_name, last_name, phone, project_id="1"):
+    mutation = """
+    mutation ($input: AddCustomerInput!) {
+      customerMutation {
+        addCustomer(input: $input) {
+          id
+        }
+      }
+    }
+    """
+    variables = {
+        "input": {
+            "firstName": first_name,
+            "lastName": last_name,
+            "phone": phone,
+            "projectId": project_id
+        }
+    }
+    response = requests.post(SALESRENDER_URL, headers=headers, json={"query": mutation, "variables": variables})
+    data = response.json()
+    return data.get("data", {}).get("customerMutation", {}).get("addCustomer", {}).get("id")
+
+def create_order(customer_id, project_id="1", status_id="1"):
+    mutation = """
+    mutation ($input: AddOrderInput!) {
+      orderMutation {
+        addOrder(input: $input) {
+          id
+          status {
+            name
+          }
+        }
+      }
+    }
+    """
+    variables = {
+        "input": {
+            "projectId": project_id,
+            "statusId": status_id,
+            "customerId": customer_id,
+            "orderData": {
+                "stringFields": []
+            }
+        }
+    }
+    response = requests.post(SALESRENDER_URL, headers=headers, json={"query": mutation, "variables": variables})
+    data = response.json()
+    return data.get("data", {}).get("orderMutation", {}).get("addOrder", {})
+
+def process_client(first_name, last_name, phone):
+    customer_id = find_customer_by_phone(phone)
+    if not customer_id:
+        customer_id = create_customer(first_name, last_name, phone)
+    order = create_order(customer_id)
+    return order
+
+# Пример использования
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
+    order = process_client("Иван", "Иванов", "+77001234567")
+    print("Создан заказ:", order)
 
 def handle_manager_message(user_id, message_text):
     # Сохраняем сообщение бота
@@ -267,6 +324,13 @@ def webhook():
             user_msg = msg["text"]["body"]
 
             print(f"💬 {user_phone}: {user_msg}")
+
+            # --- тут добавляем создание клиента и заказа в CRM ---
+            # Если в сообщении нет имени, можно передать пустые строки или парсить из текста
+            first_name = ""  
+            last_name = ""
+            order = process_client(first_name, last_name, user_phone)
+            print(f"✅ Заказ создан: {order}")
 
             start_followup_thread()
 
