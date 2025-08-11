@@ -5,7 +5,7 @@ import uuid
 app = Flask(__name__)
 
 SALESRENDER_URL = "https://de.backend.salesrender.com/companies/1123/CRM"
-SALESRENDER_TOKEN = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXNyZW5kZXIuY29tLyIsImF1ZCI6IkNSTSIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc"
+SALESRENDER_TOKEN = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9..."
 
 headers = {
     "Content-Type": "application/json",
@@ -25,6 +25,7 @@ def find_customer_by_phone(phone):
     variables = {"phone": phone}
     response = requests.post(SALESRENDER_URL, json={"query": query, "variables": variables}, headers=headers)
     data = response.json()
+    print("🔍 Ответ поиска клиента:", data)
     customers = data.get("data", {}).get("customersFetcher", {}).get("customers", [])
     if customers:
         return customers[0]["id"]
@@ -43,7 +44,7 @@ def create_customer(name, phone):
     first_name = name.split()[0] if name else "Имя"
     last_name = " ".join(name.split()[1:]) if name and len(name.split()) > 1 else "Фамилия"
 
-        # Генерируем уникальный email
+    # Генерируем уникальный email
     unique_email = f"user_{uuid.uuid4().hex[:8]}@example.com"
     
     variables = {
@@ -64,12 +65,13 @@ def create_customer(name, phone):
     }
     response = requests.post(SALESRENDER_URL, json={"query": mutation, "variables": variables}, headers=headers)
     data = response.json()
+    print("🆕 Ответ создания клиента:", data)
     if "errors" in data:
         print("Ошибка создания клиента:", data["errors"])
         return None
     return data["data"]["customerMutation"]["addCustomer"]["id"]
 
-def create_order(customer_id, phone):
+def create_order(customer_id, phone, full_name="Имя Клиента"):
     mutation = """
     mutation AddOrder($input: AddOrderInput!) {
       orderMutation {
@@ -87,13 +89,15 @@ def create_order(customer_id, phone):
             "projectId": "1",
             "statusId": "1",
             "orderData": {
-                "phoneFields": [{"value": phone}]
+                "phoneFields": [{"value": phone}],
+                "nameFields": [{"value": full_name}]
             },
             "customerId": customer_id
         }
     }
     response = requests.post(SALESRENDER_URL, json={"query": mutation, "variables": variables}, headers=headers)
     data = response.json()
+    print("📦 Ответ создания заказа:", data)
     if "errors" in data:
         print("Ошибка создания заказа:", data["errors"])
         return None
@@ -115,8 +119,11 @@ def webhook():
         msg = messages[0]
         raw_phone = msg["from"]
         user_phone = format_phone(raw_phone)
-        user_name = "Имя Клиента"  # Можно вытянуть из msg, если есть
 
+        # Берём имя клиента из профиля WhatsApp, если есть
+        user_name = msg.get("profile", {}).get("name", "Имя Клиента")
+
+        # Ищем клиента
         customer_id = find_customer_by_phone(user_phone)
         if not customer_id:
             customer_id = create_customer(user_name, user_phone)
@@ -124,12 +131,13 @@ def webhook():
                 print("Не удалось создать клиента")
                 return jsonify({"status": "error creating customer"}), 500
 
-        order_id = create_order(customer_id, user_phone)
+        # Создаём заказ с телефоном и ФИО в полях
+        order_id = create_order(customer_id, user_phone, user_name)
         if not order_id:
             print("Не удалось создать заказ")
             return jsonify({"status": "error creating order"}), 500
 
-        print(f"✅ Заказ создан с ID {order_id} для клиента {customer_id}")
+        print(f"✅ Заказ {order_id} создан для клиента {customer_id} ({user_name}, {user_phone})")
 
     except Exception as e:
         print(f"❌ Ошибка в webhook: {e}")
