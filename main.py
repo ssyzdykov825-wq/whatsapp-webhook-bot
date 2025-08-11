@@ -43,7 +43,7 @@ def create_customer(name, phone):
     last_name = " ".join(name.split()[1:]) if name and len(name.split()) > 1 else "Фамилия"
     variables = {
         "input": {
-            "email": f"{phone}@example.com",
+            "email": f"{phone}@example1.com",
             "password": "ChangeMe123!",
             "name": {
                 "firstName": first_name,
