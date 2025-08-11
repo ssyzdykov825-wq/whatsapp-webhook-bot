@@ -350,34 +350,14 @@ def start_followup_thread():
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
-    print("📩 Келген JSON:", data)
-
+    # Извлечь номер телефона и имя, если есть
     try:
-        messages = data["entry"][0]["changes"][0]["value"].get("messages")
-        if messages:
-            msg = messages[0]
-            user_phone = msg["from"]
-            user_msg = msg["text"]["body"]
-
-            print(f"💬 {user_phone}: {user_msg}")
-
-            # --- тут добавляем создание клиента и заказа в CRM ---
-            # Если в сообщении нет имени, можно передать пустые строки или парсить из текста
-            first_name = ""  
-            last_name = ""
-            order = process_client(first_name, last_name, user_phone)
-            print(f"✅ Заказ создан: {order}")
-
-            start_followup_thread()
-
-            if USER_STATE.get(user_phone, {}).get("last_message") == user_msg:
-                print("⚠️ Қайталау — өткізіп жібереміз")
-                return jsonify({"status": "duplicate"}), 200
-
-            reply = get_gpt_response(user_msg, user_phone)
-            for part in split_message(reply):
-                send_whatsapp_message(user_phone, part)
-
+        msg = data["entry"][0]["changes"][0]["value"]["messages"][0]
+        user_phone = msg["from"]
+        # Тут можешь вытянуть имя из msg, если есть
+        user_name = "Имя Клиента"
+        order_id = process_client(user_phone, first_name=user_name)
+        print(f"✅ Заказ создан: {order_id}")
     except Exception as e:
         print(f"❌ Обработка қатесі: {e}")
 
