@@ -271,17 +271,21 @@ last_sent = {}
 # ==== Отправка сообщения в WhatsApp ====
 def handle_manager_message(phone, text):
     """
-    Отправка сообщения в WhatsApp через 360dialog API.
+    Отправка сообщения в WhatsApp через 360dialog.
     """
-    try:
-        payload = {
-            "to": phone,
-            "type": "text",
-            "text": {"body": text}
+    payload = {
+        "messaging_product": "whatsapp",  # ОБЯЗАТЕЛЬНОЕ поле!
+        "to": phone,
+        "type": "text",
+        "text": {
+            "body": text
         }
-        print(f"[DEBUG] Отправка в WhatsApp: {phone} → {text}")
-        print(f"[DEBUG] Payload: {payload}")
+    }
 
+    print(f"[DEBUG] Отправка в WhatsApp: {phone} → {text}")
+    print(f"[DEBUG] Payload: {payload}")
+
+    try:
         response = requests.post(
             WHATSAPP_API_URL,
             headers=HEADERS,
@@ -289,10 +293,8 @@ def handle_manager_message(phone, text):
             timeout=10
         )
         print(f"[DEBUG] Ответ WhatsApp API: {response.status_code} {response.text}")
-
         response.raise_for_status()
-        print(f"✅ Сообщение успешно отправлено на {phone}")
-    except Exception as e:
+    except requests.RequestException as e:
         print(f"❌ Ошибка отправки WhatsApp: {e}")
 
 # ==== Функция запроса в CRM ====
