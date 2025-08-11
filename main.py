@@ -43,7 +43,7 @@ def create_customer(name, phone):
     last_name = " ".join(name.split()[1:]) if name and len(name.split()) > 1 else "Фамилия"
     variables = {
         "input": {
-            "email": f"{phone}@example1.com",
+            "email": f"{phone}@example3.com",
             "password": "ChangeMe123!",
             "name": {
                 "firstName": first_name,
@@ -73,7 +73,6 @@ def create_order(customer_id, phone):
           status {
             name
           }
-          phone
         }
       }
     }
@@ -82,8 +81,10 @@ def create_order(customer_id, phone):
         "input": {
             "projectId": "1",
             "statusId": "1",
-            "customerId": customer_id,
-            "phone": phone
+            "orderData": {
+                "phoneFields": [{"value": phone}]
+            },
+            "customerId": customer_id
         }
     }
     response = requests.post(SALESRENDER_URL, json={"query": mutation, "variables": variables}, headers=headers)
