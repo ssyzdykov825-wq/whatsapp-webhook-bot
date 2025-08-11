@@ -16,51 +16,9 @@ headers = {
     "Authorization": SALESRENDER_TOKEN
 }
 
-def find_customer_by_phone(phone):
-    query = """
-    query ($phone: String!) {
-      customersFetcher(filters: { phoneFields: { eq: $phone } }) {
-        customers {
-          id
-          firstName
-          lastName
-        }
-      }
-    }
-    """
-    variables = {"phone": phone}
-    response = requests.post(SALESRENDER_URL, headers=headers, json={"query": query, "variables": variables})
-    data = response.json()
-    customers = data.get("data", {}).get("customersFetcher", {}).get("customers", [])
-    if customers:
-        return customers[0]["id"]
-    return None
-
-def create_customer(first_name, last_name, phone, project_id="1"):
+def create_order(customer_id, phone):
     mutation = """
-    mutation ($input: AddCustomerInput!) {
-      customerMutation {
-        addCustomer(input: $input) {
-          id
-        }
-      }
-    }
-    """
-    variables = {
-        "input": {
-            "firstName": first_name,
-            "lastName": last_name,
-            "phone": phone,
-            "projectId": project_id
-        }
-    }
-    response = requests.post(SALESRENDER_URL, headers=headers, json={"query": mutation, "variables": variables})
-    data = response.json()
-    return data.get("data", {}).get("customerMutation", {}).get("addCustomer", {}).get("id")
-
-def create_order(customer_id, project_id="1", status_id="1"):
-    mutation = """
-    mutation ($input: AddOrderInput!) {
+    mutation AddOrder($input: AddOrderInput!) {
       orderMutation {
         addOrder(input: $input) {
           id
@@ -73,29 +31,36 @@ def create_order(customer_id, project_id="1", status_id="1"):
     """
     variables = {
         "input": {
-            "projectId": project_id,
-            "statusId": status_id,
-            "customerId": customer_id,
+            "projectId": "1",  # твой проект
+            "statusId": "1",   # статус заказа
             "orderData": {
-                "stringFields": []
-            }
+                "phoneFields": [{"value": phone}],
+                # тут нужно передать хотя бы минимальные обязательные поля заказа
+            },
+            "customerId": customer_id
         }
     }
-    response = requests.post(SALESRENDER_URL, headers=headers, json={"query": mutation, "variables": variables})
-    data = response.json()
-    return data.get("data", {}).get("orderMutation", {}).get("addOrder", {})
 
-def process_client(first_name, last_name, phone):
-    customer_id = find_customer_by_phone(phone)
-    if not customer_id:
-        customer_id = create_customer(first_name, last_name, phone)
-    order = create_order(customer_id)
-    return order
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": SALESRENDER_TOKEN
+    }
 
-# Пример использования
-if __name__ == "__main__":
-    order = process_client("Иван", "Иванов", "+77001234567")
-    print("Создан заказ:", order)
+    response = requests.post(SALESRENDER_URL, json={"query": mutation, "variables": variables}, headers=headers)
+    print("Статус ответа:", response.status_code)
+    print("Ответ от CRM:", response.text)
+
+    if response.status_code == 200:
+        json_resp = response.json()
+        if "errors" in json_resp:
+            print("Ошибка в GraphQL запросе:", json_resp["errors"])
+            return None
+        order_data = json_resp.get("data", {}).get("orderMutation", {}).get("addOrder")
+        print("Созданный заказ:", order_data)
+        return order_data
+    else:
+        print(f"Ошибка HTTP: {response.status_code}")
+        return None
 
 def handle_manager_message(user_id, message_text):
     # Сохраняем сообщение бота
