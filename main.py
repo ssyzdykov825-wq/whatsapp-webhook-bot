@@ -97,14 +97,14 @@ def get_order_form_fields(project_id):
       }
     }
     """
-resp = requests.post(SALESRENDER_URL, json={"query": query, "variables": {"projectId": project_id}}, headers=headers)
-try:
-    data = resp.json()
-    print("DEBUG: Ответ get_order_form_fields:", json.dumps(data, ensure_ascii=False, indent=2))
-except ValueError:
-    print("❌ Ошибка получения формы заказа:", resp.text)
-    return None  # <-- ОТСТУП ВОТ ТУТ ОБЯЗАТЕЛЕН!
-return data.get("data", {}).get("orderFormFetcher", {}).get("fields", [])
+    resp = requests.post(SALESRENDER_URL, json={"query": query, "variables": {"projectId": project_id}}, headers=headers)
+    try:
+        data = resp.json()
+        print("DEBUG: Ответ get_order_form_fields:", json.dumps(data, ensure_ascii=False, indent=2))
+    except ValueError:
+        print("❌ Ошибка получения формы заказа:", resp.text)
+        return None
+    return data.get("data", {}).get("orderFormFetcher", {}).get("fields", [])
 
 # --- Создание заказа ---
 def create_order(customer_id, phone, name, project_id="1", status_id="1"):
@@ -120,10 +120,41 @@ def create_order(customer_id, phone, name, project_id="1", status_id="1"):
         print("❌ Не удалось найти поля для имени и телефона")
         return None
 
-    # Далее создание заказа без изменений
+    mutation = """
+    mutation AddOrder($input: AddOrderInput!) {
+      orderMutation {
+        addOrder(input: $input) { id }
+      }
+    }
+    """
+    variables = {
+        "input": {
+            "customerId": customer_id,
+            "projectId": "1",
+            "statusId": "1",
+            "orderData": {
+                "values": [
+                    {"fieldId": name_field["id"], "value": name},
+                    {"fieldId": phone_field["id"], "value": phone}
+                ]
+            }
+        }
+    }
 
-# ...
+    resp = requests.post(SALESRENDER_URL, json={"query": mutation, "variables": variables}, headers=headers)
+    try:
+        data = resp.json()
+    except ValueError:
+        print("❌ Ошибка при создании заказа:", resp.text)
+        return None
 
+    if "errors" in data:
+        print("❌ Ошибка при создании заказа:", data["errors"])
+        return None
+
+    return data.get("data", {}).get("orderMutation", {}).get("addOrder", {}).get("id")
+
+# --- Вебхук ---
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
@@ -148,10 +179,7 @@ def webhook():
 
         order_id = create_order(customer_id, user_phone, user_name, project_id="1", status_id="1")
         if not order_id:
-            # Вместо 500 лучше вернуть 200, чтобы не падал сервер,
-            # и отладочная информация
-            print("❌ Не удалось создать заказ, пропускаем")
-            return jsonify({"status": "order not created, missing fields or error"}), 200
+            return jsonify({"status": "error creating order"}), 500
 
         print(f"✅ Заказ {order_id} создан для клиента {customer_id} ({user_name}, {user_phone})")
 
@@ -161,6 +189,7 @@ def webhook():
         return jsonify({"status": "error", "message": str(e)}), 500
 
     return jsonify({"status": "ok"}), 200
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
