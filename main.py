@@ -24,9 +24,9 @@ def find_customer_by_phone(phone):
     """
     variables = {"phone": phone}
     response = requests.post(
-        CRM_API_URL,
+        SALESRENDER_URL,  # заменил CRM_API_URL
         json={"query": query, "variables": variables},
-        headers=HEADERS
+        headers=headers  # заменил HEADERS
     )
     data = response.json()
     print("🔍 Ответ поиска клиента:", data)
