@@ -4,7 +4,13 @@ import threading
 import requests
 from flask import Flask, request, jsonify
 from openai import OpenAI
+from memory import load_memory, save_memory, add_message_to_memory
 
+def handle_manager_message(user_id, message_text):
+    history = load_memory(user_id)  # Загружаем память
+    add_message_to_memory(user_id, "assistant", message_text)  # Записываем сообщение от бота
+    send_whatsapp_message(user_id, message_text)  # Отправляем клиенту
+    
 app = Flask(__name__)
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
@@ -388,7 +394,7 @@ def process_salesrender_order(order):
             message_text = f"{greeting}! Біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
 
         # Отправляем в WhatsApp (твоя функция)
-        send_whatsapp_message(phone, message_text)
+        handle_manager_message(phone, message_text)
 
         # Запоминаем отправку
         last_sent[phone] = now
