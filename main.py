@@ -118,12 +118,20 @@ def create_order(customer_id, phone, name, project_id="1", status_id="1"):
         print("❌ Нет полей формы заказа")
         return None
 
-    # Ищем id полей
-    name_field_id = next((f["id"] for f in fields if "фио" in f["label"].lower() or "имя" in f["label"].lower()), None)
-    phone_field_id = next((f["id"] for f in fields if "тел" in f["label"].lower()), None)
+    # Создаём словарь для orderData, где ключ — id поля, значение — {"value": ...}
+    order_data = {}
 
-    if not name_field_id or not phone_field_id:
-        print("❌ Не удалось найти поля для имени и телефона")
+    for field in fields:
+        fid = field["id"]
+        # Заполняем нужные поля, остальные можно пропускать или добавить при необходимости
+        if fid == "name":
+            order_data[fid] = {"value": name}
+        elif fid == "phone":
+            order_data[fid] = {"value": phone}
+        # Можно расширить для других полей, например, comment, address и т.п.
+
+    if not order_data:
+        print("❌ Нет данных для заказа")
         return None
 
     mutation = """
@@ -133,11 +141,6 @@ def create_order(customer_id, phone, name, project_id="1", status_id="1"):
       }
     }
     """
-
-    order_data = {
-        name_field_id: name,
-        phone_field_id: phone
-    }
 
     variables = {
         "input": {
