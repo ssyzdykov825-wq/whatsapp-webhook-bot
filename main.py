@@ -18,18 +18,12 @@ headers = {
 def format_phone(phone_raw):
     digits = ''.join(filter(str.isdigit, str(phone_raw)))
     if len(digits) == 11 and digits.startswith("8"):
-        national = digits
-        international = "+" + "7" + digits[1:]
+        return {"international": "+7" + digits[1:], "national": digits}
     elif len(digits) == 11 and digits.startswith("7"):
-        international = "+" + digits
-        national = "8" + digits[1:]
+        return {"international": "+" + digits, "national": "8" + digits[1:]}
     elif len(digits) == 10:
-        international = "+7" + digits
-        national = "8" + digits
-    else:
-        international = "+" + digits if not phone_raw.startswith("+") else phone_raw
-        national = digits
-    return {"international": international, "national": national}
+        return {"international": "+7" + digits, "national": "8" + digits}
+    return {"international": "+" + digits, "national": digits}
 
 # --- Поиск клиента ---
 def find_customer_by_phone(phone):
@@ -51,7 +45,6 @@ def find_customer_by_phone(phone):
         try:
             data = resp.json()
         except ValueError:
-            print("❌ Невалидный JSON при поиске клиента:", resp.text)
             continue
         customers = data.get("data", {}).get("customersFetcher", {}).get("customers", [])
         if customers:
@@ -63,20 +56,12 @@ def create_customer(name, phone_raw):
     mutation = """
     mutation AddCustomer($input: AddCustomerInput!) {
       customerMutation {
-        addCustomer(input: $input) {
-          id
-        }
+        addCustomer(input: $input) { id }
       }
     }
     """
-    if name:
-        parts = name.strip().split()
-        first_name = parts[0]
-        last_name = " ".join(parts[1:]) if len(parts) > 1 else ""
-    else:
-        first_name = ""
-        last_name = ""
-
+    first_name, *last_parts = name.strip().split()
+    last_name = " ".join(last_parts) if last_parts else ""
     unique_email = f"user_{uuid.uuid4().hex[:8]}@example.com"
     phone = format_phone(phone_raw)
 
@@ -84,15 +69,8 @@ def create_customer(name, phone_raw):
         "input": {
             "email": unique_email,
             "password": "ChangeMe123!",
-            "name": {
-                "firstName": first_name,
-                "lastName": last_name
-            },
-            "locale": {
-                "language": "ru_RU",
-                "currency": "KZT",
-                "timezone": "Asia/Almaty"
-            },
+            "name": {"firstName": first_name, "lastName": last_name},
+            "locale": {"language": "ru_RU", "currency": "KZT", "timezone": "Asia/Almaty"},
             "phone": phone
         }
     }
@@ -101,7 +79,6 @@ def create_customer(name, phone_raw):
     try:
         data = resp.json()
     except ValueError:
-        print("❌ Невалидный JSON при создании клиента:", resp.text)
         return None
 
     if "errors" in data:
@@ -111,37 +88,66 @@ def create_customer(name, phone_raw):
 
     return data["data"]["customerMutation"]["addCustomer"]["id"]
 
-# --- Создание заказа ---
-def create_order(customer_id, phone, name, project_id, status_id):
+# --- Получение ID полей формы заказа ---
+def get_order_form_fields(project_id):
     query = """
+    query GetOrderForm($projectId: ID!) {
+      orderFormFetcher(projectId: $projectId) {
+        fields { id name type }
+      }
+    }
+    """
+    resp = requests.post(SALESRENDER_URL, json={"query": query, "variables": {"projectId": project_id}}, headers=headers)
+    try:
+        data = resp.json()
+    except ValueError:
+        print("❌ Ошибка получения формы заказа:", resp.text)
+        return None
+    return data.get("data", {}).get("orderFormFetcher", {}).get("fields", [])
+
+# --- Создание заказа ---
+def create_order(customer_id, phone, name, project_id="1", status_id="1"):
+    # Получаем поля формы
+    fields = get_order_form_fields(project_id)
+    if not fields:
+        print("❌ Нет полей формы заказа")
+        return None
+
+    # Ищем поля для имени и телефона
+    name_field = next((f for f in fields if "имя" in f["name"].lower()), None)
+    phone_field = next((f for f in fields if "тел" in f["name"].lower()), None)
+
+    if not name_field or not phone_field:
+        print("❌ Не удалось найти поля для имени и телефона")
+        return None
+
+    mutation = """
     mutation AddOrder($input: AddOrderInput!) {
       orderMutation {
-        addOrder(input: $input) {
-          id
-        }
+        addOrder(input: $input) { id }
       }
     }
     """
     variables = {
         "input": {
             "customerId": customer_id,
-            "projectId": "1",
-            "statusId": "1",
+            "projectId": project_id,
+            "statusId": status_id,
             "orderData": {
-                "title": f"Заказ от {name}",
-                "description": f"Создан из WhatsApp, телефон: {phone}"
+                "values": [
+                    {"fieldId": name_field["id"], "value": name},
+                    {"fieldId": phone_field["id"], "value": phone}
+                ]
             }
         }
     }
 
-    resp = requests.post(SALESRENDER_URL, json={"query": query, "variables": variables}, headers=headers)
+    resp = requests.post(SALESRENDER_URL, json={"query": mutation, "variables": variables}, headers=headers)
     try:
         data = resp.json()
     except ValueError:
-        print("❌ Невалидный JSON при создании заказа:", resp.text)
+        print("❌ Ошибка при создании заказа:", resp.text)
         return None
-
-    print("📡 Ответ GraphQL при создании заказа:", json.dumps(data, ensure_ascii=False, indent=2))
 
     if "errors" in data:
         print("❌ Ошибка при создании заказа:", data["errors"])
@@ -149,7 +155,7 @@ def create_order(customer_id, phone, name, project_id, status_id):
 
     return data.get("data", {}).get("orderMutation", {}).get("addOrder", {}).get("id")
 
-# --- Обработка вебхука ---
+# --- Вебхук ---
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
@@ -167,18 +173,12 @@ def webhook():
         user_phone = raw_from
 
         customer_id = find_customer_by_phone(user_phone)
-        print("🔍 Найденный клиент:", customer_id)
-
         if not customer_id:
             customer_id = create_customer(user_name, user_phone)
-        print("👤 Созданный клиент:", customer_id)
-
         if not customer_id:
             return jsonify({"status": "error creating customer"}), 500
 
         order_id = create_order(customer_id, user_phone, user_name, project_id="1", status_id="1")
-        print("📦 Созданный заказ:", order_id)
-
         if not order_id:
             return jsonify({"status": "error creating order"}), 500
 
