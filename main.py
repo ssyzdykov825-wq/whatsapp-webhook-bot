@@ -400,9 +400,8 @@ def process_salesrender_order(order):
                     f"Есімін қолданбаңыз."
                 )
 
-            # Генерация текста через GPT
             completion = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4o",
                 messages=[
                     {"role": "system", "content": "Сіз тәжірибелі клиенттік менеджерсіз."},
                     {"role": "user", "content": prompt}
