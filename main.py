@@ -133,6 +133,25 @@ def webhook():
 
     return jsonify({"status": "ok"}), 200
 
+from flask import Flask, request, jsonify
+
+app = Flask(__name__)
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    data = request.get_json()
+    try:
+        msg = data["entry"][0]["changes"][0]["value"]["messages"][0]
+        user_phone = msg["from"]
+        user_name = "Имя"  # или вытяни из msg, если есть
+
+        order_id = process_client(user_phone, first_name=user_name)
+        print(f"✅ Заказ создан: {order_id}")
+    except Exception as e:
+        print(f"❌ Обработка қатесі: {e}")
+
+    return jsonify({"status": "ok"}), 200
+
 def handle_manager_message(user_id, message_text):
     # Сохраняем сообщение бота
     save_message(user_id, "bot", message_text)
