@@ -127,8 +127,8 @@ def create_order(customer_id, phone_raw, full_name, project_id="1", status_id="1
 
     variables = {
         "input": {
-            "projectId": project_id,
-            "statusId": status_id,
+            "projectId": "1",
+            "statusId": "1",
             "orderData": {
                 "customFields": [
                     {
