@@ -416,5 +416,33 @@ def process_salesrender_order(order):
     except Exception as e:
         print(f"❌ Ошибка обработки заказа: {e}")
 
+# ==== Вебхук ====
+@app.route('/salesrender-hook', methods=['POST'])
+def salesrender_hook():
+    print("=== Входящий запрос в /salesrender-hook ===")
+    try:
+        data = request.get_json()
+        print("Payload:", data)
+
+        orders = (
+            data.get("data", {}).get("orders")
+            or data.get("orders")
+            or [data]
+        )
+
+        if not orders or not isinstance(orders, list):
+            return jsonify({"error": "Нет заказов"}), 400
+
+        threading.Thread(
+            target=process_salesrender_order,
+            args=(orders[0],),
+            daemon=True
+        ).start()
+
+        return jsonify({"status": "accepted"}), 200
+    except Exception as e:
+        print(f"❌ Ошибка парсинга вебхука: {e}")
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
