@@ -12,26 +12,24 @@ headers = {
     "Authorization": SALESRENDER_TOKEN
 }
 
-# --- Нормализация номера: возвращает словарь с international и national ---
+# --- Форматирование телефона ---
 def format_phone(phone_raw):
     digits = ''.join(filter(str.isdigit, str(phone_raw)))
-    # Ожидаем номера вида 7XXXXXXXXXX (11 цифр) или 8XXXXXXXXXX (11) либо 10/other
     if len(digits) == 11 and digits.startswith("8"):
-        national = digits  # 8XXXXXXXXXX
+        national = digits
         international = "+" + "7" + digits[1:]
     elif len(digits) == 11 and digits.startswith("7"):
         international = "+" + digits
         national = "8" + digits[1:]
-    elif len(digits) == 10:  # редкий случай без кода страны
+    elif len(digits) == 10:
         international = "+7" + digits
         national = "8" + digits
     else:
-        # fallback — просто ставим + перед цифрами и оставляем как есть
         international = "+" + digits if not phone_raw.startswith("+") else phone_raw
         national = digits
     return {"international": international, "national": national}
 
-# --- Поиск клиента по телефону: пробуем international, затем national ---
+# --- Поиск клиента по телефону ---
 def find_customer_by_phone(phone):
     q = """
     query ($phone: String!) {
@@ -44,7 +42,6 @@ def find_customer_by_phone(phone):
       }
     }
     """
-    # Форматы для поиска
     ph = format_phone(phone)
     for phone_variant in (ph["international"], ph["national"]):
         variables = {"phone": phone_variant}
@@ -54,7 +51,6 @@ def find_customer_by_phone(phone):
         except ValueError:
             print("❌ Невалидный JSON при поиске клиента:", resp.text)
             continue
-        print("🔍 Ответ поиска клиента (вариант):", phone_variant, data)
         customers = data.get("data", {}).get("customersFetcher", {}).get("customers", [])
         if customers:
             return customers[0]["id"]
@@ -71,7 +67,6 @@ def create_customer(name, phone_raw):
       }
     }
     """
-
     if name:
         parts = name.strip().split()
         first_name = parts[0]
@@ -81,12 +76,7 @@ def create_customer(name, phone_raw):
         last_name = ""
 
     unique_email = f"user_{uuid.uuid4().hex[:8]}@example.com"
-
     phone = format_phone(phone_raw)
-    phone_data = {
-        "international": phone["international"],
-        "national": phone["national"]
-    }
 
     variables = {
         "input": {
@@ -101,7 +91,7 @@ def create_customer(name, phone_raw):
                 "currency": "KZT",
                 "timezone": "Asia/Almaty"
             },
-            "phone": phone_data
+            "phone": phone
         }
     }
 
@@ -112,19 +102,15 @@ def create_customer(name, phone_raw):
         print("❌ Невалидный JSON при создании клиента:", resp.text)
         return None
 
-    print("🆕 Ответ создания клиента:", data)
-
     if "errors" in data:
         if any(err.get("extensions", {}).get("code") == "ERR_CUSTOMER_PHONE_ALREADY_USED" for err in data["errors"]):
-            print("ℹ Телефон уже используется, ищем существующего клиента...")
             return find_customer_by_phone(phone_raw)
-        print("Ошибка создания клиента:", data["errors"])
         return None
 
     return data["data"]["customerMutation"]["addCustomer"]["id"]
 
-# --- Создание заказа (включая variables, который ты упомянул) ---
-def create_order(customer_id, phone_raw, project_id="1", status_id="1"):
+# --- Создание заказа ---
+def create_order(customer_id, phone_raw, full_name, project_id="1", status_id="1"):
     mutation = """
     mutation AddOrder($input: AddOrderInput!) {
       orderMutation {
@@ -135,32 +121,47 @@ def create_order(customer_id, phone_raw, project_id="1", status_id="1"):
     }
     """
     phone = format_phone(phone_raw)
-    # Тот самый блок variables, который ты отметил
+    parts = full_name.strip().split()
+    first_name = parts[0] if parts else ""
+    last_name = " ".join(parts[1:]) if len(parts) > 1 else ""
+
     variables = {
         "input": {
-            "projectId": project_id,  # твой проект
-            "statusId": status_id,    # твой статус
+            "projectId": project_id,
+            "statusId": status_id,
             "orderData": {
-                # SalesRender ожидает phoneFields как список словарей с value
-                "phoneFields": [{"value": phone["international"]}]
+                "customFields": [
+                    {
+                        "id": "phone",
+                        "value": {
+                            "national": phone["national"],
+                            "international": phone["international"]
+                        }
+                    },
+                    {
+                        "id": "name",
+                        "value": {
+                            "firstName": first_name,
+                            "lastName": last_name
+                        }
+                    }
+                ]
             },
             "customerId": customer_id
         }
     }
-    print("📤 Отправляем заказ:", variables)
+
     resp = requests.post(SALESRENDER_URL, json={"query": mutation, "variables": variables}, headers=headers)
     try:
         data = resp.json()
     except ValueError:
         print("❌ Невалидный JSON при создании заказа:", resp.text)
         return None
-    print("📦 Ответ создания заказа:", data)
     if "errors" in data:
-        print("Ошибка создания заказа:", data["errors"])
         return None
     return data["data"]["orderMutation"]["addOrder"]["id"]
 
-# --- Обработка вебхука WhatsApp ---
+# --- Обработка вебхука ---
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
@@ -174,18 +175,13 @@ def webhook():
         user_name = msg.get("profile", {}).get("name", "Имя Клиента")
         user_phone = raw_from
 
-        # Ищем клиента
         customer_id = find_customer_by_phone(user_phone)
-
-        # Если нет — создаём
         if not customer_id:
             customer_id = create_customer(user_name, user_phone)
-
         if not customer_id:
             return jsonify({"status": "error creating customer"}), 500
 
-        # Создаём заказ (projectId/statusId можно менять)
-        order_id = create_order(customer_id, user_phone, project_id="1", status_id="1")
+        order_id = create_order(customer_id, user_phone, user_name, project_id="1", status_id="1")
         if not order_id:
             return jsonify({"status": "error creating order"}), 500
 
