@@ -4,13 +4,6 @@ import threading
 import requests
 from flask import Flask, request, jsonify
 from openai import OpenAI
-from memory import load_memory, save_memory
-
-def handle_manager_message(user_id, message_text):
-    # Сохраняем сообщение бота
-    save_message(user_id, "bot", message_text)
-    # Отправляем клиенту
-    send_whatsapp_message(user_id, message_text)
     
 app = Flask(__name__)
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
@@ -26,7 +19,7 @@ HEADERS = {
 USER_STATE = {}
 
 SALES_SCRIPT_PROMPT = """
-Сен — Жандос есімді Healvix көз емдеу орталығының тәжірибелі кеңесшісісің. Клиентпен жылы сөйлесіп, есімін сұрап, шын мәнінде көмектесуді мақсат тұтасың. Сен робот емессің — адам секілді, сенімді, жанашыр стилде сөйлесесің.
+Сен — Айдос есімді Healvix көз емдеу орталығының тәжірибелі кеңесшісісің. Клиентпен жылы сөйлесіп, есімін сұрап, шын мәнінде көмектесуді мақсат тұтасың. Сен робот емессің — адам секілді, сенімді, жанашыр стилде сөйлесесің.
 
 Жауаптарың қысқа да емес, артық та емес — нақты, эмоциямен, тірі адамша. Клиент саған бірінші рет жазып тұр — сондықтан алдымен байланыс орнат, сенім тудыр.
 
@@ -173,12 +166,17 @@ def send_whatsapp_message(phone, message):
 
 def get_gpt_response(user_msg, user_phone):
     try:
-        history = load_memory(user_phone)  # загружаем историю из файла
-        history.append({"role": "user", "content": user_msg})
-        history = history[-20:]  # ограничиваем длину истории
+        user_data = USER_STATE.get(user_phone, {})
+        history = user_data.get("history", [])
+        stage = user_data.get("stage", "0")
 
-        system_prompt = {"role": "system", "content": SALES_SCRIPT_PROMPT}
-        messages = [system_prompt] + history
+        prompt = SALES_SCRIPT_PROMPT + "\n\n" + STAGE_PROMPTS.get(stage, "")
+
+        messages = [{"role": "system", "content": prompt}]
+        for item in history:
+            messages.append({"role": "user", "content": item["user"]})
+            messages.append({"role": "assistant", "content": item["bot"]})
+        messages.append({"role": "user", "content": user_msg})
 
         response = client.chat.completions.create(
             model="gpt-4o",
@@ -187,8 +185,15 @@ def get_gpt_response(user_msg, user_phone):
         )
         reply = response.choices[0].message.content.strip()
 
-        history.append({"role": "assistant", "content": reply})
-        save_memory(user_phone, history)  # сохраняем обратно
+        next_stage = str(int(stage) + 1) if int(stage) < 6 else "6"
+
+        USER_STATE[user_phone] = {
+            "history": history[-5:] + [{"user": user_msg, "bot": reply}],
+            "last_message": user_msg,
+            "stage": next_stage,
+            "last_time": time.time(),
+            "followed_up": False
+        }
 
         return reply
     except Exception as e:
