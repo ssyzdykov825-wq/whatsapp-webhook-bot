@@ -309,5 +309,116 @@ def fetch_order_from_crm(order_id):
         print(f"❌ Ошибка запроса в CRM API: {e}")
         return None
 
+# ==== Основная логика ====
+def process_salesrender_order(order):
+    try:
+        # Если customer пуст — подтягиваем из CRM
+        if not order.get("customer") and "id" in order:
+            print(f"⚠ customer пуст, подтягиваю из CRM по ID {order['id']}")
+            full_order = fetch_order_from_crm(order["id"])
+            if full_order:
+                order = full_order
+            else:
+                print("❌ CRM не вернул данные — пропуск")
+                return
+
+        # Достаём имя
+        first_name = ""
+        last_name = ""
+
+        if "customer" in order:  # если пришло из вебхука
+            first_name = order.get("customer", {}).get("name", {}).get("firstName", "").strip()
+            last_name = order.get("customer", {}).get("name", {}).get("lastName", "").strip()
+            phone = order.get("customer", {}).get("phone", {}).get("raw", "").strip()
+        else:  # если пришло из CRM API
+            human_fields = order.get("data", {}).get("humanNameFields", [])
+            phone_fields = order.get("data", {}).get("phoneFields", [])
+            if human_fields:
+                first_name = human_fields[0].get("value", {}).get("firstName", "").strip()
+                last_name = human_fields[0].get("value", {}).get("lastName", "").strip()
+            phone = phone_fields[0].get("value", {}).get("international", "").strip() if phone_fields else ""
+
+        name = f"{first_name} {last_name}".strip()
+
+        # Проверка телефона
+        if not phone:
+            print("❌ Телефон отсутствует — пропуск")
+            return
+
+        # Проверка дублей
+        now = datetime.utcnow()
+        if phone in last_sent and now - last_sent[phone] < timedelta(hours=6):
+            print(f"⚠ Повторный недозвон по {phone} — пропускаем")
+            return
+
+        # Определяем приветствие (UTC+6)
+        now_kz = now + timedelta(hours=6)
+        if 5 <= now_kz.hour < 12:
+            greeting = "Қайырлы таң"
+        elif 12 <= now_kz.hour < 18:
+            greeting = "Сәлеметсіз бе"
+        else:
+            greeting = "Қайырлы кеш"
+
+        # Генерация сообщения через GPT
+        try:
+            if name:
+                prompt = (
+                    f"{greeting}! Клиенттің аты {name}. "
+                    f"Оған қоңырау шалдық, бірақ байланыс болмады. "
+                    f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
+                    f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз."
+                )
+            else:
+                prompt = (
+                    f"{greeting}! Біз клиентке қоңырау шалдық, бірақ байланыс болмады. "
+                    f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
+                    f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз. "
+                    f"Есімін қолданбаңыз."
+                )
+
+            gpt_response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7
+            )
+            message_text = gpt_response.choices[0].message.content.strip()
+        except Exception as e:
+            print(f"❌ GPT қатесі: {e}")
+            message_text = f"{greeting}! Біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
+
+        # Отправляем в WhatsApp (твоя функция)
+        handle_manager_message(phone, message_text)
+
+        # Запоминаем отправку
+        last_sent[phone] = now
+        print(f"✅ Сообщение отправлено на {phone}")
+
+    except Exception as e:
+        print(f"❌ Ошибка обработки заказа: {e}")
+
+# ==== Вебхук ====
+@app.route('/salesrender-hook', methods=['POST'])
+def salesrender_hook():
+    print("=== Входящий запрос в /salesrender-hook ===")
+    try:
+        data = request.get_json()
+        print("Payload:", data)
+
+        orders = (
+            data.get("data", {}).get("orders")
+            or data.get("orders")
+            or [data]  # если пришёл один заказ без списка
+        )
+
+        if not orders or not isinstance(orders, list):
+            return jsonify({"error": "Нет заказов"}), 400
+
+        threading.Thread(target=process_salesrender_order, args=(orders[0],), daemon=True).start()
+        return jsonify({"status": "accepted"}), 200
+    except Exception as e:
+        print(f"❌ Ошибка парсинга вебхука: {e}")
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
