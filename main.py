@@ -43,8 +43,6 @@ def create_customer(name, phone):
     """
     first_name = name.split()[0] if name else "Имя"
     last_name = " ".join(name.split()[1:]) if name and len(name.split()) > 1 else "Фамилия"
-
-    # Генерируем уникальный email
     unique_email = f"user_{uuid.uuid4().hex[:8]}@example.com"
     
     variables = {
@@ -63,12 +61,18 @@ def create_customer(name, phone):
             "phone": phone
         }
     }
+
     response = requests.post(SALESRENDER_URL, json={"query": mutation, "variables": variables}, headers=headers)
     data = response.json()
     print("🆕 Ответ создания клиента:", data)
+
     if "errors" in data:
+        if any(err.get("extensions", {}).get("code") == "ERR_CUSTOMER_PHONE_ALREADY_USED" for err in data["errors"]):
+            print("ℹ Телефон уже используется, ищем существующего клиента...")
+            return find_customer_by_phone(phone)
         print("Ошибка создания клиента:", data["errors"])
         return None
+
     return data["data"]["customerMutation"]["addCustomer"]["id"]
 
 def create_order(customer_id, phone, full_name="Имя Клиента"):
@@ -95,6 +99,7 @@ def create_order(customer_id, phone, full_name="Имя Клиента"):
             "customerId": customer_id
         }
     }
+    print("📤 Отправляем заказ:", variables)
     response = requests.post(SALESRENDER_URL, json={"query": mutation, "variables": variables}, headers=headers)
     data = response.json()
     print("📦 Ответ создания заказа:", data)
@@ -119,23 +124,19 @@ def webhook():
         msg = messages[0]
         raw_phone = msg["from"]
         user_phone = format_phone(raw_phone)
-
-        # Берём имя клиента из профиля WhatsApp, если есть
         user_name = msg.get("profile", {}).get("name", "Имя Клиента")
 
-        # 🚀 ВСЕГДА создаём нового клиента
         customer_id = create_customer(user_name, user_phone)
         if not customer_id:
-            print("Не удалось создать клиента")
+            print("Не удалось создать или найти клиента")
             return jsonify({"status": "error creating customer"}), 500
 
-        # Создаём заказ с телефоном и ФИО в полях
         order_id = create_order(customer_id, user_phone, user_name)
         if not order_id:
             print("Не удалось создать заказ")
             return jsonify({"status": "error creating order"}), 500
 
-        print(f"✅ ТЕСТ: Заказ {order_id} создан для клиента {customer_id} ({user_name}, {user_phone})")
+        print(f"✅ Заказ {order_id} создан для клиента {customer_id} ({user_name}, {user_phone})")
 
     except Exception as e:
         print(f"❌ Ошибка в webhook: {e}")
