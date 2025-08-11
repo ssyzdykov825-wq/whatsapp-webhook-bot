@@ -172,34 +172,23 @@ def send_whatsapp_message(phone, message):
     return response
 
 def get_gpt_response(user_msg, user_phone):
-    history = load_memory(user_phone)  # загружаем историю — список dict с role и content
-    history.append({"role": "user", "content": user_msg})
+    try:
+        history = load_memory(user_phone)  # загружаем историю из файла
+        history.append({"role": "user", "content": user_msg})
+        history = history[-20:]  # ограничиваем длину истории
 
-    # Ограничиваем историю последних 20 сообщений
-    history = history[-20:]
+        system_prompt = {"role": "system", "content": SALES_SCRIPT_PROMPT}
+        messages = [system_prompt] + history
 
-    system_prompt = {"role": "system", "content": SALES_SCRIPT_PROMPT}
-    messages = [system_prompt] + history
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=messages,
+            temperature=0.7
+        )
+        reply = response.choices[0].message.content.strip()
 
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=messages,
-        temperature=0.7
-    )
-    reply = response.choices[0].message.content.strip()
-
-    history.append({"role": "assistant", "content": reply})
-    save_memory(user_phone, history)
-
-    return reply
-
-    USER_STATE[user_phone] = {
-            "history": history[-5:] + [{"user": user_msg, "bot": reply}],
-            "last_message": user_msg,
-            "stage": next_stage,
-            "last_time": time.time(),
-            "followed_up": False
-    }
+        history.append({"role": "assistant", "content": reply})
+        save_memory(user_phone, history)  # сохраняем обратно
 
         return reply
     except Exception as e:
