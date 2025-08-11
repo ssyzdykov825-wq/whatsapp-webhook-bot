@@ -265,9 +265,6 @@ from datetime import datetime, timedelta
 SALESRENDER_URL = "https://de.backend.salesrender.com/companies/1123/CRM"
 SALESRENDER_TOKEN = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXNyZW5kZXIuY29tLyIsImF1ZCI6IkNSTSIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc"
 
-WHATSAPP_API_URL = "https://waba-v2.360dialog.io/messages"
-WHATSAPP_API_KEY = os.environ.get("WHATSAPP_API_KEY")
-
 # Хранилище для защиты от повторов
 last_sent = {}
 
@@ -373,7 +370,7 @@ def process_salesrender_order(order):
             return
 
         now = datetime.utcnow()
-        if phone in last_sent and now - last_sent[phone] < timedelta(hours=6):
+        if phone in last_sent and now - last_sent[phone] < timedelta(minutes=3):
             print(f"⚠ Повторный недозвон по {phone} — пропускаем")
             return
 
