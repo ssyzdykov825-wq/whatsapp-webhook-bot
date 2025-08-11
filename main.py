@@ -314,6 +314,13 @@ def fetch_order_from_crm(order_id):
         return None
 
 # ==== Основная логика ====
+def handle_manager_message(phone, text):
+    """
+    Временная заглушка для отправки в WhatsApp.
+    Вместо реальной отправки просто логируем в консоль.
+    """
+    print(f"[DEBUG] Отправка в WhatsApp: {phone} → {text}")
+        
 def process_salesrender_order(order):
     try:
         if not order.get("customer") and "id" in order:
