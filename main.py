@@ -12,34 +12,56 @@ headers = {
     "Authorization": SALESRENDER_TOKEN
 }
 
-# --- Поиск клиента по телефону ---
+# --- Нормализация номера: возвращает словарь с international и national ---
+def format_phone(phone_raw):
+    digits = ''.join(filter(str.isdigit, str(phone_raw)))
+    # Ожидаем номера вида 7XXXXXXXXXX (11 цифр) или 8XXXXXXXXXX (11) либо 10/other
+    if len(digits) == 11 and digits.startswith("8"):
+        national = digits  # 8XXXXXXXXXX
+        international = "+" + "7" + digits[1:]
+    elif len(digits) == 11 and digits.startswith("7"):
+        international = "+" + digits
+        national = "8" + digits[1:]
+    elif len(digits) == 10:  # редкий случай без кода страны
+        international = "+7" + digits
+        national = "8" + digits
+    else:
+        # fallback — просто ставим + перед цифрами и оставляем как есть
+        international = "+" + digits if not phone_raw.startswith("+") else phone_raw
+        national = digits
+    return {"international": international, "national": national}
+
+# --- Поиск клиента по телефону: пробуем international, затем national ---
 def find_customer_by_phone(phone):
-    query = """
+    q = """
     query ($phone: String!) {
       customersFetcher(filters: { include: { phone: $phone } }) {
         customers {
           id
-          name {
-            firstName
-            lastName
-          }
-          phone {
-            national
-            international
-          }
+          name { firstName lastName }
+          phone { national international }
         }
       }
     }
     """
-    variables = {"phone": phone}
-    response = requests.post(SALESRENDER_URL, json={"query": query, "variables": variables}, headers=headers)
-    data = response.json()
-    print("🔍 Ответ поиска клиента:", data)
-    customers = data.get("data", {}).get("customersFetcher", {}).get("customers", [])
-    return customers[0]["id"] if customers else None
+    # Форматы для поиска
+    ph = format_phone(phone)
+    for phone_variant in (ph["international"], ph["national"]):
+        variables = {"phone": phone_variant}
+        resp = requests.post(SALESRENDER_URL, json={"query": q, "variables": variables}, headers=headers)
+        try:
+            data = resp.json()
+        except ValueError:
+            print("❌ Невалидный JSON при поиске клиента:", resp.text)
+            continue
+        print("🔍 Ответ поиска клиента (вариант):", phone_variant, data)
+        customers = data.get("data", {}).get("customersFetcher", {}).get("customers", [])
+        if customers:
+            return customers[0]["id"]
+    return None
 
 # --- Создание клиента ---
-def create_customer(name, phone):
+def create_customer(name, phone_raw):
     mutation = """
     mutation AddCustomer($input: AddCustomerInput!) {
       customerMutation {
@@ -49,9 +71,22 @@ def create_customer(name, phone):
       }
     }
     """
-    first_name = name.split()[0] if name else "Имя"
-    last_name = " ".join(name.split()[1:]) if name and len(name.split()) > 1 else "Фамилия"
+
+    if name:
+        parts = name.strip().split()
+        first_name = parts[0]
+        last_name = " ".join(parts[1:]) if len(parts) > 1 else ""
+    else:
+        first_name = ""
+        last_name = ""
+
     unique_email = f"user_{uuid.uuid4().hex[:8]}@example.com"
+
+    phone = format_phone(phone_raw)
+    phone_data = {
+        "international": phone["international"],
+        "national": phone["national"]
+    }
 
     variables = {
         "input": {
@@ -66,26 +101,30 @@ def create_customer(name, phone):
                 "currency": "KZT",
                 "timezone": "Asia/Almaty"
             },
-            "phone": phone
+            "phone": phone_data
         }
     }
 
-    response = requests.post(SALESRENDER_URL, json={"query": mutation, "variables": variables}, headers=headers)
-    data = response.json()
+    resp = requests.post(SALESRENDER_URL, json={"query": mutation, "variables": variables}, headers=headers)
+    try:
+        data = resp.json()
+    except ValueError:
+        print("❌ Невалидный JSON при создании клиента:", resp.text)
+        return None
+
     print("🆕 Ответ создания клиента:", data)
 
-    # Если номер уже есть — ищем клиента
     if "errors" in data:
         if any(err.get("extensions", {}).get("code") == "ERR_CUSTOMER_PHONE_ALREADY_USED" for err in data["errors"]):
             print("ℹ Телефон уже используется, ищем существующего клиента...")
-            return find_customer_by_phone(phone)
+            return find_customer_by_phone(phone_raw)
         print("Ошибка создания клиента:", data["errors"])
         return None
 
     return data["data"]["customerMutation"]["addCustomer"]["id"]
 
-# --- Создание заказа ---
-def create_order(customer_id, phone):
+# --- Создание заказа (включая variables, который ты упомянул) ---
+def create_order(customer_id, phone_raw, project_id="1", status_id="1"):
     mutation = """
     mutation AddOrder($input: AddOrderInput!) {
       orderMutation {
@@ -95,29 +134,31 @@ def create_order(customer_id, phone):
       }
     }
     """
+    phone = format_phone(phone_raw)
+    # Тот самый блок variables, который ты отметил
     variables = {
         "input": {
-            "projectId": "1",  # твой проект
-            "statusId": "1",   # твой статус
+            "projectId": project_id,  # твой проект
+            "statusId": status_id,    # твой статус
             "orderData": {
-                "phoneFields": [{"value": phone}]
+                # SalesRender ожидает phoneFields как список словарей с value
+                "phoneFields": [{"value": phone["international"]}]
             },
             "customerId": customer_id
         }
     }
     print("📤 Отправляем заказ:", variables)
-    response = requests.post(SALESRENDER_URL, json={"query": mutation, "variables": variables}, headers=headers)
-    data = response.json()
+    resp = requests.post(SALESRENDER_URL, json={"query": mutation, "variables": variables}, headers=headers)
+    try:
+        data = resp.json()
+    except ValueError:
+        print("❌ Невалидный JSON при создании заказа:", resp.text)
+        return None
     print("📦 Ответ создания заказа:", data)
-
     if "errors" in data:
         print("Ошибка создания заказа:", data["errors"])
         return None
     return data["data"]["orderMutation"]["addOrder"]["id"]
-
-# --- Форматирование номера ---
-def format_phone(phone):
-    return "+" + phone if not phone.startswith("+") else phone
 
 # --- Обработка вебхука WhatsApp ---
 @app.route('/webhook', methods=['POST'])
@@ -129,8 +170,9 @@ def webhook():
             return jsonify({"status": "no messages"}), 200
 
         msg = messages[0]
-        user_phone = format_phone(msg["from"])
+        raw_from = msg.get("from")
         user_name = msg.get("profile", {}).get("name", "Имя Клиента")
+        user_phone = raw_from
 
         # Ищем клиента
         customer_id = find_customer_by_phone(user_phone)
@@ -142,8 +184,8 @@ def webhook():
         if not customer_id:
             return jsonify({"status": "error creating customer"}), 500
 
-        # Создаём заказ
-        order_id = create_order(customer_id, user_phone)
+        # Создаём заказ (projectId/statusId можно менять)
+        order_id = create_order(customer_id, user_phone, project_id="1", status_id="1")
         if not order_id:
             return jsonify({"status": "error creating order"}), 500
 
