@@ -27,9 +27,7 @@ def find_customer_by_phone(phone):
     data = response.json()
     print("🔍 Ответ поиска клиента:", data)
     customers = data.get("data", {}).get("customersFetcher", {}).get("customers", [])
-    if customers:
-        return customers[0]["id"]
-    return None
+    return customers[0]["id"] if customers else None
 
 def create_customer(name, phone):
     mutation = """
@@ -43,8 +41,6 @@ def create_customer(name, phone):
     """
     first_name = name.split()[0] if name else "Имя"
     last_name = " ".join(name.split()[1:]) if name and len(name.split()) > 1 else "Фамилия"
-
-    # Генерируем уникальный email
     unique_email = f"user_{uuid.uuid4().hex[:8]}@example.com"
     
     variables = {
@@ -77,20 +73,42 @@ def create_order(customer_id, phone, full_name="Имя Клиента"):
       orderMutation {
         addOrder(input: $input) {
           id
-          status {
-            name
-          }
         }
       }
     }
     """
+    first_name = full_name.split()[0] if full_name else ""
+    last_name = " ".join(full_name.split()[1:]) if len(full_name.split()) > 1 else ""
+
     variables = {
         "input": {
-            "projectId": "1",
-            "statusId": "1",
+            "projectId": 1,
+            "statusId": 1,
             "orderData": {
-                "phoneFields": [{"value": phone}],
-                "nameFields": [{"value": full_name}]
+                "humanNameFields": [
+                    {
+                        "field": "name",
+                        "value": {
+                            "firstName": first_name,
+                            "lastName": last_name
+                        }
+                    }
+                ],
+                "phoneFields": [
+                    {
+                        "field": "phone",
+                        "value": phone
+                    }
+                ]
+            },
+            "cart": {
+                "items": [
+                    {
+                        "itemId": 1,
+                        "variation": 1,
+                        "quantity": 1
+                    }
+                ]
             },
             "customerId": customer_id
         }
@@ -104,38 +122,36 @@ def create_order(customer_id, phone, full_name="Имя Клиента"):
     return data["data"]["orderMutation"]["addOrder"]["id"]
 
 def format_phone(phone):
-    if not phone.startswith("+"):
-        return "+" + phone
-    return phone
+    return "+" + phone if not phone.startswith("+") else phone
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
+    print("📩 Получены данные от 360dialog:", data)
+
     try:
-        messages = data["entry"][0]["changes"][0]["value"].get("messages")
+        messages = data.get("messages", [])
         if not messages:
             return jsonify({"status": "no messages"}), 200
 
         msg = messages[0]
-        raw_phone = msg["from"]
+        raw_phone = msg.get("from")
         user_phone = format_phone(raw_phone)
 
-        # Берём имя клиента из профиля WhatsApp, если есть
-        user_name = msg.get("profile", {}).get("name", "Имя Клиента")
+        contacts = data.get("contacts", [])
+        user_name = contacts[0]["profile"]["name"] if contacts and "profile" in contacts[0] else "Имя Клиента"
 
-        # 🚀 ВСЕГДА создаём нового клиента
+        # Создаём клиента
         customer_id = create_customer(user_name, user_phone)
         if not customer_id:
-            print("Не удалось создать клиента")
             return jsonify({"status": "error creating customer"}), 500
 
-        # Создаём заказ с телефоном и ФИО в полях
+        # Создаём заказ
         order_id = create_order(customer_id, user_phone, user_name)
         if not order_id:
-            print("Не удалось создать заказ")
             return jsonify({"status": "error creating order"}), 500
 
-        print(f"✅ ТЕСТ: Заказ {order_id} создан для клиента {customer_id} ({user_name}, {user_phone})")
+        print(f"✅ Заказ {order_id} создан для клиента {customer_id} ({user_name}, {user_phone})")
 
     except Exception as e:
         print(f"❌ Ошибка в webhook: {e}")
