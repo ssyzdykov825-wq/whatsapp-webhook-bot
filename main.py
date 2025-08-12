@@ -33,6 +33,7 @@ def create_order(full_name, phone):
                 }
               ]
             }
+            # Не указываем clientId, чтобы "Клиент" остался пустым
           }
         ) {
           id
