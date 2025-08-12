@@ -4,24 +4,7 @@ import threading
 import requests
 from flask import Flask, request, jsonify
 from openai import OpenAI
-from salesrender_api import create_order, client_exists
-
-def process_new_lead(name, phone):
-    """Обработка нового лида из CRM или бота"""
-
-    # Проверяем наличие клиента в CRM
-    if client_exists(phone):
-        print(f"⚠️ Клиент {phone} уже есть в CRM — заказ не создаём")
-        return None  # Не создаём заказ, бот продолжает работать
-
-    # Если клиента нет — создаём заказ
-    order_id = create_order(name, phone)
-    if order_id:
-        print(f"✅ Заказ {order_id} создан ({name}, {phone})")
-        return order_id
-    else:
-        print(f"❌ Не удалось создать заказ для {name}, {phone}")
-        return None
+from salesrender_api import create_order
 
 app = Flask(__name__)
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
@@ -35,10 +18,9 @@ HEADERS = {
 }
 
 USER_STATE = {}
-PROCESSED_MESSAGES = set()  # тут храним ID уже обработанных сообщений
 
 SALES_SCRIPT_PROMPT = """
-Сен — Жандос есімді Healvix көз емдеу орталығының тәжірибелі кеңесшісісің. Клиентпен жылы сөйлесіп, есімін сұрап, шын мәнінде көмектесуді мақсат тұтасың. Сен робот емессің — адам секілді, сенімді, жанашыр стилде сөйлесесің.
+Сен — Айдос есімді Healvix көз емдеу орталығының тәжірибелі кеңесшісісің. Клиентпен жылы сөйлесіп, есімін сұрап, шын мәнінде көмектесуді мақсат тұтасың. Сен робот емессің — адам секілді, сенімді, жанашыр стилде сөйлесесің.
 
 Жауаптарың қысқа да емес, артық та емес — нақты, эмоциямен, тірі адамша. Клиент саған бірінші рет жазып тұр — сондықтан алдымен байланыс орнат, сенім тудыр.
 
@@ -151,7 +133,7 @@ SALES_SCRIPT_PROMPT = """
 """
 
 STAGE_PROMPTS = {
-    "0": "Менің атым Айдос 😊, Healvix көз емдеу орталығының маманымын. Қалыңыз қалай? Есіміңіз кім, қай қаладансыз? Көзіңізге байланысты проблема бар ма?",
+    "0": "Сәлеметсіз бе! 👋 Менің атым Айдос 😊, Healvix көз емдеу орталығынан жазып отырмын. Қалыңыз қалай? Есіміңіз кім, қай қаладансыз? Көзіңізге байланысты проблема бар ма?",
     "1": "Қазір нақтылап сұрайын: көруіңізде қандай өзгеріс бар? Бұлдырлау ма, қызару ма, ауырсыну ма, әлде катаракта белгілері ме? 👁️",
     "2": "Бұл жағдай қашан басталды? Бұрын дәрігерге қаралдыңыз ба? Капля қолдандыңыз ба, қандай ем жасап көрдіңіз? ⏳🩺",
     "3": "Көз — өте нәзік мүше. Егер уақытында қолға алмасаңыз, асқынып операцияға апаруы мүмкін. Бұл жағдай көру сапасына әсер етеді.",
@@ -253,39 +235,43 @@ def webhook():
         messages = data["entry"][0]["changes"][0]["value"].get("messages")
         contacts = data["entry"][0]["changes"][0]["value"].get("contacts", [])
 
-        if not messages:
-            return jsonify({"status": "no_message"}), 200
+        if messages:
+            msg = messages[0]
+            user_phone = msg["from"]
+            user_msg = msg["text"]["body"]
 
-        msg = messages[0]
-        message_id = msg.get("id")  # уникальный ID от WhatsApp
-
-        # Проверка на дубликат
-        if message_id in PROCESSED_MESSAGES:
-            print(f"⏩ Сообщение {message_id} уже обработано — пропускаем")
-            return jsonify({"status": "duplicate"}), 200
-        PROCESSED_MESSAGES.add(message_id)
-
-        user_phone = msg["from"]
-        user_msg = msg["text"]["body"]
-
-        # Если это первый контакт
-        if not USER_STATE.get(user_phone):
-            full_name = contacts[0]["profile"].get("name", "Клиент") if contacts else "Клиент"
-
-            # 🔍 Проверка в CRM
-            if client_exists(user_phone):
-                print(f"⚠️ Клиент {user_phone} уже есть в CRM — заказ не создаём")
+            # Разбиваем имя
+            if contacts:
+                full_name = contacts[0]["profile"].get("name", "Клиент")
             else:
-                order_id = process_new_lead(full_name, user_phone)
-                if order_id:
-                    print(f"✅ Новый заказ {order_id} создан ({full_name}, {user_phone})")
-                else:
-                    print(f"❌ Ошибка создания заказа для {user_phone}")
+                full_name = "Клиент"
 
-            # Помечаем, что контакт обработан, чтобы не проверять снова
-            USER_STATE[user_phone] = {"in_crm": True}
+            name_parts = full_name.split(" ", 1)
+            first_name = name_parts[0]
+            last_name = name_parts[1] if len(name_parts) > 1 else ""
 
-        # ❗ На этом этапе бот не отвечает — ответит только при /salesrender-hook (недозвон)
+            print(f"💬 {user_phone}: {user_msg}")
+
+            # Создаём заказ в SalesRender
+            order_id = create_order(full_name, user_phone)
+            if order_id:
+                print(f"✅ Заказ {order_id} создан ({full_name}, {user_phone})")
+            else:
+                print("❌ Ошибка создания заказа в SalesRender")
+
+            # Запускаем follow-up
+            start_followup_thread()
+
+            # Проверка на повтор
+            if USER_STATE.get(user_phone, {}).get("last_message") == user_msg:
+                print("⚠️ Қайталау — өткізіп жібереміз")
+                return jsonify({"status": "duplicate"}), 200
+
+            # Генерируем ответ и отправляем
+            reply = get_gpt_response(user_msg, user_phone)
+            for part in split_message(reply):
+                send_whatsapp_message(user_phone, part)
+
         return jsonify({"status": "ok"}), 200
 
     except Exception as e:
@@ -380,7 +366,7 @@ def fetch_order_from_crm(order_id):
 # ==== Основная логика ====
 def process_salesrender_order(order):
     try:
-        # Если customer пустой, подтягиваем из CRM
+        # Если customer пустой, пытаемся подтянуть из CRM
         if not order.get("customer") and "id" in order:
             print(f"⚠ customer пуст, подтягиваю из CRM по ID {order['id']}")
             full_order = fetch_order_from_crm(order["id"])
@@ -427,7 +413,7 @@ def process_salesrender_order(order):
         else:
             greeting = "Қайырлы кеш"
 
-        # ===== Шаг 1: короткое тёплое сообщение =====
+        # Генерация сообщения через GPT
         try:
             if name:
                 prompt = (
@@ -449,26 +435,17 @@ def process_salesrender_order(order):
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.7
             )
-            warm_message = gpt_response.choices[0].message.content.strip()
+            message_text = gpt_response.choices[0].message.content.strip()
         except Exception as e:
             print(f"❌ GPT қатесі: {e}")
-            warm_message = f"{greeting}! Біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
+            message_text = f"{greeting}! Біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
 
-        handle_manager_message(phone, warm_message)
-
-        # ===== Шаг 2: старт скрипта продаж =====
-        try:
-            intro_text = get_gpt_response(
-                user_msg="Клиент не ответил на звонок, начни диалог по скрипту.",
-                user_phone=phone
-            )
-            handle_manager_message(phone, intro_text)
-        except Exception as e:
-            print(f"❌ Ошибка при старте скрипта продаж: {e}")
+        # Отправляем в WhatsApp (твоя функция)
+        handle_manager_message(phone, message_text)
 
         # Запоминаем отправку
         last_sent[phone] = now
-        print(f"✅ Сообщения отправлены на {phone}")
+        print(f"✅ Сообщение отправлено на {phone}")
 
     except Exception as e:
         print(f"❌ Ошибка обработки заказа: {e}")
