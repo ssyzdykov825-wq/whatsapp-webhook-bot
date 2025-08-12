@@ -226,9 +226,16 @@ def send_whatsapp_message(phone, message):
 
 def get_gpt_response(user_msg, user_phone):
     try:
-        user_data = USER_STATE.get(user_phone, {})
-        history = user_data.get("history", [])
-        stage = user_data.get("stage", "0")
+        user_data = get_user_state(user_phone) or {
+            "history": [],
+            "stage": "0",
+            "last_message": None,
+            "last_time": None,
+            "followed_up": False
+        }
+
+        history = user_data["history"]
+        stage = user_data["stage"]
 
         prompt = SALES_SCRIPT_PROMPT + "\n\n" + STAGE_PROMPTS.get(stage, "")
 
@@ -247,13 +254,14 @@ def get_gpt_response(user_msg, user_phone):
 
         next_stage = str(int(stage) + 1) if int(stage) < 6 else "6"
 
-        USER_STATE[user_phone] = {
-            "history": history[-5:] + [{"user": user_msg, "bot": reply}],
-            "last_message": user_msg,
-            "stage": next_stage,
-            "last_time": time.time(),
-            "followed_up": False
-        }
+        set_user_state(
+            phone=user_phone,
+            stage=next_stage,
+            history=history[-5:] + [{"user": user_msg, "bot": reply}],
+            last_message=user_msg,
+            last_time=time.time(),
+            followed_up=False
+        )
 
         return reply
     except Exception as e:
