@@ -4,7 +4,7 @@ import threading
 import requests
 from flask import Flask, request, jsonify
 from openai import OpenAI
-from salesrender_api import create_lead
+from salesrender_api import create_order
 
 app = Flask(__name__)
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
