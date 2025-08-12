@@ -11,24 +11,21 @@ headers = {
     "Authorization": SALESRENDER_TOKEN
 }
 
-def create_lead(full_name, phone):
+def create_order(full_name, phone):
     mutation = """
     mutation($firstName: String!, $lastName: String!, $phone: String!) {
-      leadMutation {
-        addLead(
+      orderMutation {
+        addOrder(
           input: {
-            offerId: 1
-            externalTag: "whatsapp"
-            externalId: $phone
-            data: {
-              phone_1: $phone
-              humanName_1: {
-                firstName: $firstName
-                lastName: $lastName
-              }
-            }
-            source: {
-              utm_source: "whatsapp"
+            projectId: 1
+            statusId: 1
+            orderData: {
+              humanNameFields: [
+                { field: "name", value: { firstName: $firstName, lastName: $lastName } }
+              ]
+              phoneFields: [
+                { field: "phone", value: $phone }
+              ]
             }
           }
         ) {
@@ -48,10 +45,10 @@ def create_lead(full_name, phone):
     }
     response = requests.post(SALESRENDER_URL, json={"query": mutation, "variables": variables}, headers=headers)
     data = response.json()
-    print("📦 Ответ создания лида:", data)
+    print("📦 Ответ создания заказа:", data)
     if "errors" in data:
         return None
-    return data["data"]["leadMutation"]["addLead"]["id"]
+    return data["data"]["orderMutation"]["addOrder"]["id"]
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -73,11 +70,11 @@ def webhook():
         phone = messages[0].get("from", "")
         name = contacts[0]["profile"].get("name", "Клиент") if contacts else "Клиент"
 
-        lead_id = create_lead(name, phone)
-        if not lead_id:
-            return jsonify({"status": "error creating lead"}), 500
+        order_id = create_order(name, phone)
+        if not order_id:
+            return jsonify({"status": "error creating order"}), 500
 
-        print(f"✅ Лид {lead_id} создан ({name}, {phone})")
+        print(f"✅ Заказ {order_id} создан ({name}, {phone})")
 
     except Exception as e:
         print(f"❌ Ошибка в webhook: {e}")
