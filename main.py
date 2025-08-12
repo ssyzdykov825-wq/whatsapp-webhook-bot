@@ -259,19 +259,6 @@ def webhook():
             else:
                 print("❌ Ошибка создания заказа в SalesRender")
 
-            # Запускаем follow-up
-            start_followup_thread()
-
-            # Проверка на повтор
-            if USER_STATE.get(user_phone, {}).get("last_message") == user_msg:
-                print("⚠️ Қайталау — өткізіп жібереміз")
-                return jsonify({"status": "duplicate"}), 200
-
-            # Генерируем ответ и отправляем
-            reply = get_gpt_response(user_msg, user_phone)
-            for part in split_message(reply):
-                send_whatsapp_message(user_phone, part)
-
         return jsonify({"status": "ok"}), 200
 
     except Exception as e:
