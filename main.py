@@ -105,12 +105,12 @@ def set_user_state(phone, stage, history, last_message, last_time, followed_up, 
             UPDATE user_state 
             SET stage=%s, history=%s, last_message=%s, last_time=%s, followed_up=%s, in_crm=%s
             WHERE phone=%s
-        """, (stage, history_json, last_message, last_time, int(followed_up), in_crm, phone))
+        """, (stage, history_json, last_message, last_time, int(followed_up), bool(in_crm), phone))
     else:
         c.execute("""
             INSERT INTO user_state (phone, stage, history, last_message, last_time, followed_up, in_crm)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (phone, stage, history_json, last_message, last_time, int(followed_up), in_crm))
+        """, (phone, stage, history_json, last_message, last_time, int(followed_up), bool(in_crm)))
     conn.commit()
     conn.close()
 
