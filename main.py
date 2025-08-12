@@ -14,6 +14,33 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 conn = psycopg2.connect(DATABASE_URL)
 cur = conn.cursor()
 
+def ensure_in_crm_column_type():
+    conn = psycopg2.connect(DATABASE_URL)
+    c = conn.cursor()
+
+    # Проверяем, существует ли колонка in_crm
+    c.execute("""
+        SELECT column_name, data_type
+        FROM information_schema.columns
+        WHERE table_name = 'user_state' AND column_name = 'in_crm';
+    """)
+    column_info = c.fetchone()
+
+    # Если колонка существует и тип данных не BOOLEAN, меняем на BOOLEAN
+    if column_info and column_info[1] != 'boolean':
+        print("Меняю тип столбца 'in_crm' на BOOLEAN.")
+        c.execute("""
+            ALTER TABLE user_state 
+            ALTER COLUMN in_crm 
+            SET DATA TYPE BOOLEAN USING in_crm::BOOLEAN;
+        """)
+        conn.commit()
+
+    conn.close()
+
+# Вызываем функцию для проверки и изменения типа
+ensure_in_crm_column_type()
+
 # Создаём таблицы, если их нет
 cur.execute("""
 CREATE TABLE IF NOT EXISTS processed_messages (
