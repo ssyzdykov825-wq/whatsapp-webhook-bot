@@ -31,6 +31,18 @@ CREATE TABLE IF NOT EXISTS user_state (
     in_crm INTEGER DEFAULT 0
 );
 """)
+
+# Добавление столбца stage, если его нет
+cur.execute("""
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='user_state' AND column_name='stage') THEN
+        ALTER TABLE user_state ADD COLUMN stage TEXT DEFAULT '0';
+    END IF;
+END;
+$$;
+""")
+
 conn.commit()
 
 def add_processed_message(msg_id):
