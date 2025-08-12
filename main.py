@@ -244,8 +244,6 @@ def start_followup_thread():
         thread.start()
         print("🟢 follow-up checker запущен")
 
-USER_STATE = {}
-
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
