@@ -253,11 +253,11 @@ def webhook():
             print(f"💬 {user_phone}: {user_msg}")
 
             # Создаём лид в SalesRender
-            lead_id = create_lead(first_name, last_name, user_phone)
-            if lead_id:
-                print(f"✅ Лид {lead_id} создан ({first_name} {last_name}, {user_phone})")
-            else:
-                print("❌ Ошибка создания лида в SalesRender")
+order_id = create_order(full_name, user_phone)
+if order_id:
+    print(f"✅ Заказ {order_id} создан ({full_name}, {user_phone})")
+else:
+    print("❌ Ошибка создания заказа в SalesRender")
 
             start_followup_thread()
 
