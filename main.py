@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS processed_messages (
 cur.execute("""
 CREATE TABLE IF NOT EXISTS user_state (
     phone TEXT PRIMARY KEY,
-    stage TEXT DEFAULT '0',  # Добавлена колонка stage
+    stage TEXT DEFAULT '0',
     history TEXT DEFAULT '[]',
     last_message TEXT,
     last_time REAL,
