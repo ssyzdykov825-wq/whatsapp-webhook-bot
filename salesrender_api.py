@@ -3,15 +3,30 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-SALESRENDER_URL = "https://de.backend.salesrender.com/companies/1123/CRM"
-SALESRENDER_TOKEN = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXNyZW5kZXIuY29tLyIsImF1ZCI6IkNSTSIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc"
+# Настройки SalesRender
+SALESRENDER_BASE_URL = "https://de.backend.salesrender.com/companies/1123/CRM"
+SALESRENDER_API_KEY = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXNyZW5kZXIuY29tLyIsImF1ZCI6IkNSTSIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc"
 
-headers = {
-    "Content-Type": "application/json",
-    "Authorization": SALESRENDER_TOKEN
-}
+def client_exists(phone):
+    """Проверяет, есть ли клиент с таким телефоном в SalesRender"""
+    url = f"{SALESRENDER_BASE_URL}/clients?search={phone}"
+    headers = {
+        "Authorization": SALESRENDER_API_KEY,
+        "Content-Type": "application/json"
+    }
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        exists = len(data.get("data", [])) > 0
+        print(f"🔍 Клиент {'найден' if exists else 'не найден'} в CRM ({phone})")
+        return exists
+    except Exception as e:
+        print(f"❌ Ошибка проверки клиента: {e}")
+        return False
 
 def create_order(full_name, phone):
+    """Создаёт заказ в SalesRender"""
     mutation = """
     mutation($firstName: String!, $lastName: String!, $phone: String!) {
       orderMutation {
@@ -38,17 +53,27 @@ def create_order(full_name, phone):
     first_name = name_parts[0]
     last_name = name_parts[1] if len(name_parts) > 1 else ""
 
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": SALESRENDER_API_KEY
+    }
+
     variables = {
         "firstName": first_name,
         "lastName": last_name,
         "phone": phone
     }
-    response = requests.post(SALESRENDER_URL, json={"query": mutation, "variables": variables}, headers=headers)
-    data = response.json()
-    print("📦 Ответ создания заказа:", data)
-    if "errors" in data:
+
+    try:
+        response = requests.post(SALESRENDER_BASE_URL, json={"query": mutation, "variables": variables}, headers=headers)
+        data = response.json()
+        print("📦 Ответ создания заказа:", data)
+        if "errors" in data:
+            return None
+        return data["data"]["orderMutation"]["addOrder"]["id"]
+    except Exception as e:
+        print(f"❌ Ошибка создания заказа: {e}")
         return None
-    return data["data"]["orderMutation"]["addOrder"]["id"]
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -70,6 +95,12 @@ def webhook():
         phone = messages[0].get("from", "")
         name = contacts[0]["profile"].get("name", "Клиент") if contacts else "Клиент"
 
+        # Проверка — есть ли клиент в CRM
+        if client_exists(phone):
+            print(f"⚠️ Клиент {phone} уже есть в CRM — заказ не создаём")
+            return jsonify({"status": "client exists"}), 200
+
+        # Если клиента нет — создаём заказ
         order_id = create_order(name, phone)
         if not order_id:
             return jsonify({"status": "error creating order"}), 500
