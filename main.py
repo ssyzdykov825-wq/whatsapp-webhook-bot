@@ -235,29 +235,29 @@ def webhook():
         messages = data["entry"][0]["changes"][0]["value"].get("messages")
         contacts = data["entry"][0]["changes"][0]["value"].get("contacts", [])
 
-        if messages:
-            msg = messages[0]
-            user_phone = msg["from"]
-            user_msg = msg["text"]["body"]
+        if not messages:
+            return jsonify({"status": "no_message"}), 200
 
-            # Разбиваем имя
-            if contacts:
-                full_name = contacts[0]["profile"].get("name", "Клиент")
-            else:
-                full_name = "Клиент"
+        msg = messages[0]
+        user_phone = msg["from"]
+        user_msg = msg["text"]["body"]
 
-            name_parts = full_name.split(" ", 1)
-            first_name = name_parts[0]
-            last_name = name_parts[1] if len(name_parts) > 1 else ""
-
-            print(f"💬 {user_phone}: {user_msg}")
-
-            # Создаём заказ в SalesRender
+        # Проверяем, CRM ли это (например, CRM всегда пишет с определенного номера)
+        CRM_NUMBERS = {"79990000000"}  # сюда номер(а) CRM
+        if user_phone not in CRM_NUMBERS:
+            # Новое сообщение от клиента → в CRM
+            full_name = contacts[0]["profile"].get("name", "Клиент") if contacts else "Клиент"
             order_id = create_order(full_name, user_phone)
             if order_id:
                 print(f"✅ Заказ {order_id} создан ({full_name}, {user_phone})")
             else:
                 print("❌ Ошибка создания заказа в SalesRender")
+            return jsonify({"status": "ok"}), 200
+
+        # Если это CRM — работаем по скриптам
+        reply = get_gpt_response(user_msg, user_phone)
+        for part in split_message(reply):
+            send_whatsapp_message(user_phone, part)
 
         return jsonify({"status": "ok"}), 200
 
