@@ -43,12 +43,12 @@ END;
 $$;
 """)
 
-# Добавление столбца history, если его нет
+# Добавление столбца last_message, если его нет
 cur.execute("""
 DO $$
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='user_state' AND column_name='history') THEN
-        ALTER TABLE user_state ADD COLUMN history TEXT DEFAULT '[]';
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='user_state' AND column_name='last_message') THEN
+        ALTER TABLE user_state ADD COLUMN last_message TEXT;
     END IF;
 END;
 $$;
