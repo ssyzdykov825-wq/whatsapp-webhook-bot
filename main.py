@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS processed_messages (
     id TEXT PRIMARY KEY
 );
 """)
+
 cur.execute("""
 CREATE TABLE IF NOT EXISTS user_state (
     phone TEXT PRIMARY KEY,
@@ -49,6 +50,39 @@ DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='user_state' AND column_name='last_message') THEN
         ALTER TABLE user_state ADD COLUMN last_message TEXT;
+    END IF;
+END;
+$$;
+""")
+
+# Добавление столбца last_time, если его нет
+cur.execute("""
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='user_state' AND column_name='last_time') THEN
+        ALTER TABLE user_state ADD COLUMN last_time REAL;
+    END IF;
+END;
+$$;
+""")
+
+# Добавление столбца followed_up, если его нет
+cur.execute("""
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='user_state' AND column_name='followed_up') THEN
+        ALTER TABLE user_state ADD COLUMN followed_up INTEGER DEFAULT 0;
+    END IF;
+END;
+$$;
+""")
+
+# Добавление столбца in_crm, если его нет
+cur.execute("""
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='user_state' AND column_name='in_crm') THEN
+        ALTER TABLE user_state ADD COLUMN in_crm INTEGER DEFAULT 0;
     END IF;
 END;
 $$;
