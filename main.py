@@ -13,34 +13,40 @@ headers = {
 
 def create_order(full_name, phone):
     mutation = """
-    mutation($name: String!, $phone: String!) {
+    mutation($firstName: String!, $lastName: String!, $phone: String!) {
       orderMutation {
         addOrder(
           input: {
             projectId: 1
             statusId: 1
             orderData: {
-              humanNameFields: {
-                field: "name",
-                value: { lastName: $name }
-              }
-              phoneFields: {
-                field: "phone",
-                value: $phone
-              }
-            }
-            cart: {
-              items: [
-                { itemId: 1, variation: 1, quantity: 1 }
+              humanNameFields: [
+                {
+                  field: "name"
+                  value: { firstName: $firstName, lastName: $lastName }
+                }
+              ]
+              phoneFields: [
+                {
+                  field: "phone"
+                  value: $phone
+                }
               ]
             }
           }
-        ) { id }
+        ) {
+          id
+        }
       }
     }
     """
+    name_parts = full_name.strip().split(" ", 1)
+    first_name = name_parts[0]
+    last_name = name_parts[1] if len(name_parts) > 1 else ""
+
     variables = {
-        "name": full_name,
+        "firstName": first_name,
+        "lastName": last_name,
         "phone": phone
     }
     response = requests.post(SALESRENDER_URL, json={"query": mutation, "variables": variables}, headers=headers)
