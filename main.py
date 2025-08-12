@@ -130,7 +130,18 @@ def webhook():
     print("📩 Получены данные от 360dialog:", data)
 
     try:
-        messages = data.get("messages", [])
+        entry = data.get("entry", [])
+        if not entry:
+            return jsonify({"status": "no entry"}), 200
+
+        changes = entry[0].get("changes", [])
+        if not changes:
+            return jsonify({"status": "no changes"}), 200
+
+        value = changes[0].get("value", {})
+        messages = value.get("messages", [])
+        contacts = value.get("contacts", [])
+
         if not messages:
             return jsonify({"status": "no messages"}), 200
 
@@ -138,17 +149,20 @@ def webhook():
         raw_phone = msg.get("from")
         user_phone = format_phone(raw_phone)
 
-        contacts = data.get("contacts", [])
-        user_name = contacts[0]["profile"]["name"] if contacts and "profile" in contacts[0] else "Имя Клиента"
+        user_name = "Имя Клиента"
+        if contacts and "profile" in contacts[0]:
+            user_name = contacts[0]["profile"].get("name", user_name)
 
         # Создаём клиента
         customer_id = create_customer(user_name, user_phone)
         if not customer_id:
+            print("❌ Не удалось создать клиента")
             return jsonify({"status": "error creating customer"}), 500
 
         # Создаём заказ
         order_id = create_order(customer_id, user_phone, user_name)
         if not order_id:
+            print("❌ Не удалось создать заказ")
             return jsonify({"status": "error creating order"}), 500
 
         print(f"✅ Заказ {order_id} создан для клиента {customer_id} ({user_name}, {user_phone})")
@@ -158,6 +172,6 @@ def webhook():
         return jsonify({"status": "error"}), 500
 
     return jsonify({"status": "ok"}), 200
-
+    
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
