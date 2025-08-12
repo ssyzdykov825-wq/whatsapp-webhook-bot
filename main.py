@@ -226,6 +226,8 @@ def start_followup_thread():
         thread.start()
         print("🟢 follow-up checker запущен")
 
+USER_STATE = {}
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
@@ -235,42 +237,39 @@ def webhook():
         messages = data["entry"][0]["changes"][0]["value"].get("messages")
         contacts = data["entry"][0]["changes"][0]["value"].get("contacts", [])
 
-        if messages:
-            msg = messages[0]
-            user_phone = msg["from"]
-            user_msg = msg["text"]["body"]
+        if not messages:
+            return jsonify({"status": "no_message"}), 200
 
-            # Разбиваем имя
-            if contacts:
-                full_name = contacts[0]["profile"].get("name", "Клиент")
-            else:
-                full_name = "Клиент"
+        msg = messages[0]
+        user_phone = msg["from"]
+        user_msg = msg["text"]["body"]
 
-            name_parts = full_name.split(" ", 1)
-            first_name = name_parts[0]
-            last_name = name_parts[1] if len(name_parts) > 1 else ""
+        # Получаем имя
+        if contacts:
+            full_name = contacts[0]["profile"].get("name", "Клиент")
+        else:
+            full_name = "Клиент"
 
-            print(f"💬 {user_phone}: {user_msg}")
+        name_parts = full_name.split(" ", 1)
+        first_name = name_parts[0]
+        last_name = name_parts[1] if len(name_parts) > 1 else ""
 
-            # Создаём заказ в SalesRender
+        print(f"💬 {user_phone}: {user_msg}")
+
+        # Если первый раз пишем — создаём заказ и молчим
+        if not USER_STATE.get(user_phone, {}).get("lead_created"):
             order_id = create_order(full_name, user_phone)
             if order_id:
                 print(f"✅ Заказ {order_id} создан ({full_name}, {user_phone})")
+                USER_STATE[user_phone] = {"lead_created": True}
             else:
                 print("❌ Ошибка создания заказа в SalesRender")
+            return jsonify({"status": "lead_created"}), 200
 
-            # Запускаем follow-up
-            start_followup_thread()
-
-            # Проверка на повтор
-            if USER_STATE.get(user_phone, {}).get("last_message") == user_msg:
-                print("⚠️ Қайталау — өткізіп жібереміз")
-                return jsonify({"status": "duplicate"}), 200
-
-            # Генерируем ответ и отправляем
-            reply = get_gpt_response(user_msg, user_phone)
-            for part in split_message(reply):
-                send_whatsapp_message(user_phone, part)
+        # Если уже создавали лид — бот отвечает
+        reply = get_gpt_response(user_msg, user_phone)
+        for part in split_message(reply):
+            send_whatsapp_message(user_phone, part)
 
         return jsonify({"status": "ok"}), 200
 
