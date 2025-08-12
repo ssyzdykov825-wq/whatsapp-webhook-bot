@@ -3,9 +3,51 @@ import time
 import threading
 import requests
 import json
+import psycopg2
 from flask import Flask, request, jsonify
 from openai import OpenAI
 from salesrender_api import create_order, client_exists
+
+# Подключение к PostgreSQL
+DATABASE_URL = os.environ.get("DATABASE_URL")
+conn = psycopg2.connect(DATABASE_URL)
+cur = conn.cursor()
+
+# Создаём таблицы, если их нет
+cur.execute("""
+CREATE TABLE IF NOT EXISTS processed_messages (
+    id TEXT PRIMARY KEY
+);
+""")
+cur.execute("""
+CREATE TABLE IF NOT EXISTS user_state (
+    phone TEXT PRIMARY KEY,
+    in_crm BOOLEAN
+);
+""")
+conn.commit()
+
+def add_processed_message(msg_id):
+    cur.execute("INSERT INTO processed_messages (id) VALUES (%s) ON CONFLICT DO NOTHING;", (msg_id,))
+    conn.commit()
+
+def is_processed_message(msg_id):
+    cur.execute("SELECT 1 FROM processed_messages WHERE id = %s;", (msg_id,))
+    return cur.fetchone() is not None
+
+def set_user_state(phone, in_crm=True):
+    cur.execute("""
+    INSERT INTO user_state (phone, in_crm)
+    VALUES (%s, %s)
+    ON CONFLICT (phone) DO UPDATE SET in_crm = EXCLUDED.in_crm;
+    """, (phone, in_crm))
+    conn.commit()
+
+def get_user_state(phone):
+    cur.execute("SELECT in_crm FROM user_state WHERE phone = %s;", (phone,))
+    row = cur.fetchone()
+    return {"in_crm": row[0]} if row else None
+
 
 def process_new_lead(name, phone):
     """Обработка нового лида из CRM или бота"""
@@ -13,7 +55,7 @@ def process_new_lead(name, phone):
     # Проверяем наличие клиента в CRM
     if client_exists(phone):
         print(f"⚠️ Клиент {phone} уже есть в CRM — заказ не создаём")
-        return None  # Не создаём заказ, бот продолжает работать
+        return None
 
     # Если клиента нет — создаём заказ
     order_id = create_order(name, phone)
@@ -23,7 +65,8 @@ def process_new_lead(name, phone):
     else:
         print(f"❌ Не удалось создать заказ для {name}, {phone}")
         return None
-        
+
+
 app = Flask(__name__)
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
@@ -34,26 +77,6 @@ HEADERS = {
     "Content-Type": "application/json",
     "D360-API-KEY": WHATSAPP_API_KEY
 }
-
-
-DATA_FILE = "bot_data.json"
-
-# Загружаем данные при старте
-if os.path.exists(DATA_FILE):
-    with open(DATA_FILE, "r") as f:
-        data = json.load(f)
-        PROCESSED_MESSAGES = set(data.get("processed", []))
-        USER_STATE = data.get("users", {})
-else:
-    PROCESSED_MESSAGES = set()
-    USER_STATE = {}
-
-def save_data():
-    with open(DATA_FILE, "w") as f:
-        json.dump({
-            "processed": list(PROCESSED_MESSAGES),
-            "users": USER_STATE
-        }, f)
 
 SALES_SCRIPT_PROMPT = """
 Сен — Айдос есімді Healvix көз емдеу орталығының тәжірибелі кеңесшісісің. Клиентпен жылы сөйлесіп, есімін сұрап, шын мәнінде көмектесуді мақсат тұтасың. Сен робот емессің — адам секілді, сенімді, жанашыр стилде сөйлесесің.
