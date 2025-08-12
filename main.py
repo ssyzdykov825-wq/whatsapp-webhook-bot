@@ -258,6 +258,8 @@ def webhook():
 
         msg = messages[0]
         message_id = msg.get("id")  # уникальный ID от WhatsApp
+
+        # Проверка на дубликат
         if message_id in PROCESSED_MESSAGES:
             print(f"⏩ Сообщение {message_id} уже обработано — пропускаем")
             return jsonify({"status": "duplicate"}), 200
@@ -266,10 +268,11 @@ def webhook():
         user_phone = msg["from"]
         user_msg = msg["text"]["body"]
 
-        # Если первый контакт — проверяем в CRM
+        # Если это первый контакт
         if not USER_STATE.get(user_phone):
             full_name = contacts[0]["profile"].get("name", "Клиент") if contacts else "Клиент"
 
+            # 🔍 Проверка в CRM
             if client_exists(user_phone):
                 print(f"⚠️ Клиент {user_phone} уже есть в CRM — заказ не создаём")
             else:
@@ -279,13 +282,10 @@ def webhook():
                 else:
                     print(f"❌ Ошибка создания заказа для {user_phone}")
 
+            # Помечаем, что контакт обработан, чтобы не проверять снова
             USER_STATE[user_phone] = {"in_crm": True}
 
-        # Логика бота — всегда отвечает
-        reply = get_gpt_response(user_msg, user_phone)
-        for part in split_message(reply):
-            send_whatsapp_message(user_phone, part)
-
+        # ❗ На этом этапе бот не отвечает — ответит только при /salesrender-hook (недозвон)
         return jsonify({"status": "ok"}), 200
 
     except Exception as e:
