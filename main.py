@@ -43,6 +43,17 @@ END;
 $$;
 """)
 
+# Добавление столбца history, если его нет
+cur.execute("""
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='user_state' AND column_name='history') THEN
+        ALTER TABLE user_state ADD COLUMN history TEXT DEFAULT '[]';
+    END IF;
+END;
+$$;
+""")
+
 conn.commit()
 
 def add_processed_message(msg_id):
