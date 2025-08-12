@@ -4,3 +4,4 @@ gunicorn
 python-dotenv
 openai>=1.0.0
 aiohttp
+psycopg2-binary
