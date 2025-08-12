@@ -4,8 +4,25 @@ import threading
 import requests
 from flask import Flask, request, jsonify
 from openai import OpenAI
-from salesrender_api import create_order
+from salesrender_api import create_order, client_exists
 
+def process_new_lead(name, phone):
+    """Обработка нового лида из CRM или бота"""
+
+    # Проверяем наличие клиента в CRM
+    if client_exists(phone):
+        print(f"⚠️ Клиент {phone} уже есть в CRM — заказ не создаём")
+        return None  # Не создаём заказ, бот продолжает работать
+
+    # Если клиента нет — создаём заказ
+    order_id = create_order(name, phone)
+    if order_id:
+        print(f"✅ Заказ {order_id} создан ({name}, {phone})")
+        return order_id
+    else:
+        print(f"❌ Не удалось создать заказ для {name}, {phone}")
+        return None
+        
 app = Flask(__name__)
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
@@ -244,29 +261,21 @@ def webhook():
         user_phone = msg["from"]
         user_msg = msg["text"]["body"]
 
-        # Получаем имя
-        if contacts:
-            full_name = contacts[0]["profile"].get("name", "Клиент")
-        else:
-            full_name = "Клиент"
+        # Если первый контакт — проверяем в CRM
+        if not USER_STATE.get(user_phone):
+            full_name = contacts[0]["profile"].get("name", "Клиент") if contacts else "Клиент"
 
-        name_parts = full_name.split(" ", 1)
-        first_name = name_parts[0]
-        last_name = name_parts[1] if len(name_parts) > 1 else ""
+            # Пытаемся создать заказ, если клиента нет
+            order_id = process_new_lead(full_name, user_phone)
 
-        print(f"💬 {user_phone}: {user_msg}")
-
-        # Если первый раз пишем — создаём заказ и молчим
-        if not USER_STATE.get(user_phone, {}).get("lead_created"):
-            order_id = create_order(full_name, user_phone)
             if order_id:
-                print(f"✅ Заказ {order_id} создан ({full_name}, {user_phone})")
-                USER_STATE[user_phone] = {"lead_created": True}
+                print(f"✅ Новый заказ {order_id} создан ({full_name}, {user_phone})")
             else:
-                print("❌ Ошибка создания заказа в SalesRender")
-            return jsonify({"status": "lead_created"}), 200
+                print(f"⚠️ Клиент {user_phone} уже есть в CRM — заказ не создаём")
 
-        # Если уже создавали лид — бот отвечает
+            USER_STATE[user_phone] = {"in_crm": True}
+
+        # Дальше — логика бота
         reply = get_gpt_response(user_msg, user_phone)
         for part in split_message(reply):
             send_whatsapp_message(user_phone, part)
