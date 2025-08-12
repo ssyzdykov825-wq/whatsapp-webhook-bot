@@ -9,6 +9,7 @@ from flask import Flask, request, jsonify
 from openai import OpenAI
 from salesrender_api import create_order, client_exists
 
+
 # Подключение к PostgreSQL
 DATABASE_URL = os.environ.get("DATABASE_URL")
 conn = psycopg2.connect(DATABASE_URL)
@@ -42,31 +43,25 @@ def is_processed_message(msg_id):
     return cur.fetchone() is not None
 
 def set_user_state(phone, stage, history, last_message, last_time, followed_up, in_crm=False):
-    conn = psycopg2.connect(DATABASE_URL)
-    c = conn.cursor()
-    c.execute("SELECT phone FROM user_state WHERE phone=?", (phone,))
-    exists = c.fetchone()
+    cur.execute("SELECT phone FROM user_state WHERE phone = %s;", (phone,))
+    exists = cur.fetchone()
     history_json = json.dumps(history)
     if exists:
-        c.execute("""
+        cur.execute("""
             UPDATE user_state 
-            SET stage=?, history=?, last_message=?, last_time=?, followed_up=?, in_crm=?
-            WHERE phone=?
+            SET stage=%s, history=%s, last_message=%s, last_time=%s, followed_up=%s, in_crm=%s
+            WHERE phone=%s;
         """, (stage, history_json, last_message, last_time, int(followed_up), int(in_crm), phone))
     else:
-        c.execute("""
+        cur.execute("""
             INSERT INTO user_state (phone, stage, history, last_message, last_time, followed_up, in_crm)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s);
         """, (phone, stage, history_json, last_message, last_time, int(followed_up), int(in_crm)))
     conn.commit()
-    conn.close()
 
 def get_user_state(phone):
-    conn = psycopg2.connect(DATABASE_URL)
-    c = conn.cursor()
-    c.execute("SELECT stage, history, last_message, last_time, followed_up, in_crm FROM user_state WHERE phone=?", (phone,))
-    row = c.fetchone()
-    conn.close()
+    cur.execute("SELECT stage, history, last_message, last_time, followed_up, in_crm FROM user_state WHERE phone = %s;", (phone,))
+    row = cur.fetchone()
     if row:
         return {
             "stage": row[0],
