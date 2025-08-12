@@ -272,38 +272,39 @@ def init_db():
     conn.close()
 
 def get_user_state(phone):
-    conn = sqlite3.connect(DB_PATH)
+    conn = psycopg2.connect(DATABASE_URL)  # Используем PostgreSQL
     c = conn.cursor()
-    c.execute("SELECT stage, history, last_message, last_time, followed_up FROM user_state WHERE phone=?", (phone,))
+    c.execute("SELECT stage, history, last_message, last_time, followed_up, in_crm FROM user_state WHERE phone=%s;", (phone,))
     row = c.fetchone()
     conn.close()
     if row:
         return {
             "stage": row[0],
-            "history": json.loads(row[1]),
+            "history": json.loads(row[1]),  # Преобразуем строку в список
             "last_message": row[2],
             "last_time": row[3],
-            "followed_up": bool(row[4])
+            "followed_up": bool(row[4]),
+            "in_crm": bool(row[5])
         }
     return None
 
-def set_user_state(phone, stage, history, last_message, last_time, followed_up):
-    conn = sqlite3.connect(DB_PATH)
+def set_user_state(phone, stage, history, last_message, last_time, followed_up, in_crm=False):
+    conn = psycopg2.connect(DATABASE_URL)  # Используем PostgreSQL
     c = conn.cursor()
-    c.execute("SELECT phone FROM user_state WHERE phone=?", (phone,))
+    c.execute("SELECT phone FROM user_state WHERE phone=%s;", (phone,))
     exists = c.fetchone()
-    history_json = json.dumps(history)
+    history_json = json.dumps(history)  # Преобразуем список в строку
     if exists:
         c.execute("""
             UPDATE user_state 
-            SET stage=?, history=?, last_message=?, last_time=?, followed_up=?
-            WHERE phone=?
-        """, (stage, history_json, last_message, last_time, int(followed_up), phone))
+            SET stage=%s, history=%s, last_message=%s, last_time=%s, followed_up=%s, in_crm=%s
+            WHERE phone=%s
+        """, (stage, history_json, last_message, last_time, int(followed_up), int(in_crm), phone))
     else:
         c.execute("""
-            INSERT INTO user_state (phone, stage, history, last_message, last_time, followed_up)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (phone, stage, history_json, last_message, last_time, int(followed_up)))
+            INSERT INTO user_state (phone, stage, history, last_message, last_time, followed_up, in_crm)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (phone, stage, history_json, last_message, last_time, int(followed_up), int(in_crm)))
     conn.commit()
     conn.close()
 
