@@ -266,19 +266,21 @@ def webhook():
         user_phone = msg["from"]
         user_msg = msg["text"]["body"]
 
-        # Если первый контакт — проверяем в CRM
-        if not USER_STATE.get(user_phone):
-            full_name = contacts[0]["profile"].get("name", "Клиент") if contacts else "Клиент"
+# Если первый контакт — проверяем в CRM
+if not USER_STATE.get(user_phone):
+    full_name = contacts[0]["profile"].get("name", "Клиент") if contacts else "Клиент"
 
-            # Пытаемся создать заказ, если клиента нет
-            order_id = process_new_lead(full_name, user_phone)
-
-            if order_id:
-                print(f"✅ Новый заказ {order_id} создан ({full_name}, {user_phone})")
-            else:
-                print(f"⚠️ Клиент {user_phone} уже есть в CRM — заказ не создаём")
-
-            USER_STATE[user_phone] = {"in_crm": True}
+    # 🔍 Проверяем в CRM
+    if client_exists(user_phone):
+        print(f"⚠️ Клиент {user_phone} уже есть в CRM — заказ не создаём")
+        USER_STATE[user_phone] = {"in_crm": True}
+    else:
+        order_id = process_new_lead(full_name, user_phone)
+        if order_id:
+            print(f"✅ Новый заказ {order_id} создан ({full_name}, {user_phone})")
+        else:
+            print(f"❌ Ошибка создания заказа для {user_phone}")
+        USER_STATE[user_phone] = {"in_crm": True}
 
         # Дальше — логика бота
         reply = get_gpt_response(user_msg, user_phone)
