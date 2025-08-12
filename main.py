@@ -242,19 +242,21 @@ def webhook():
         user_phone = msg["from"]
         user_msg = msg["text"]["body"]
 
-        # Проверяем, CRM ли это (например, CRM всегда пишет с определенного номера)
-        CRM_NUMBERS = {"79990000000"}  # сюда номер(а) CRM
-        if user_phone not in CRM_NUMBERS:
-            # Новое сообщение от клиента → в CRM
+        # Проверяем — это первый раз или уже был в CRM
+        if not USER_STATE.get(user_phone):  # если нет записи — значит новый контакт
             full_name = contacts[0]["profile"].get("name", "Клиент") if contacts else "Клиент"
             order_id = create_order(full_name, user_phone)
             if order_id:
-                print(f"✅ Заказ {order_id} создан ({full_name}, {user_phone})")
+                print(f"✅ Новый заказ {order_id} создан ({full_name}, {user_phone})")
             else:
                 print("❌ Ошибка создания заказа в SalesRender")
-            return jsonify({"status": "ok"}), 200
 
-        # Если это CRM — работаем по скриптам
+            # Сохраняем, что уже отправляли в CRM
+            USER_STATE[user_phone] = {"in_crm": True}
+
+            return jsonify({"status": "sent_to_crm"}), 200
+
+        # Если контакт уже есть — работаем по скрипту
         reply = get_gpt_response(user_msg, user_phone)
         for part in split_message(reply):
             send_whatsapp_message(user_phone, part)
