@@ -252,12 +252,18 @@ def webhook():
 
             print(f"💬 {user_phone}: {user_msg}")
 
-            # Создаём лид в SalesRender
-order_id = create_order(full_name, user_phone)
-if order_id:
-    print(f"✅ Заказ {order_id} создан ({full_name}, {user_phone})")
-else:
-    print("❌ Ошибка создания заказа в SalesRender")
+            # Создаём заказ в SalesRender
+            order_id = create_order(full_name, user_phone)
+            if order_id:
+                print(f"✅ Заказ {order_id} создан ({full_name}, {user_phone})")
+            else:
+                print("❌ Ошибка создания заказа в SalesRender")
+
+        return jsonify({"status": "ok"}), 200
+
+    except Exception as e:
+        print(f"❌ Ошибка в webhook: {e}")
+        return jsonify({"status": "error"}), 500
 
             start_followup_thread()
 
