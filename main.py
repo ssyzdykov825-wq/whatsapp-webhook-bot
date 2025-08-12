@@ -2,6 +2,7 @@ import os
 import time
 import threading
 import requests
+import json
 from flask import Flask, request, jsonify
 from openai import OpenAI
 from salesrender_api import create_order, client_exists
@@ -34,8 +35,25 @@ HEADERS = {
     "D360-API-KEY": WHATSAPP_API_KEY
 }
 
-USER_STATE = {}
-PROCESSED_MESSAGES = set()  # тут храним ID уже обработанных сообщений
+
+DATA_FILE = "bot_data.json"
+
+# Загружаем данные при старте
+if os.path.exists(DATA_FILE):
+    with open(DATA_FILE, "r") as f:
+        data = json.load(f)
+        PROCESSED_MESSAGES = set(data.get("processed", []))
+        USER_STATE = data.get("users", {})
+else:
+    PROCESSED_MESSAGES = set()
+    USER_STATE = {}
+
+def save_data():
+    with open(DATA_FILE, "w") as f:
+        json.dump({
+            "processed": list(PROCESSED_MESSAGES),
+            "users": USER_STATE
+        }, f)
 
 SALES_SCRIPT_PROMPT = """
 Сен — Айдос есімді Healvix көз емдеу орталығының тәжірибелі кеңесшісісің. Клиентпен жылы сөйлесіп, есімін сұрап, шын мәнінде көмектесуді мақсат тұтасың. Сен робот емессің — адам секілді, сенімді, жанашыр стилде сөйлесесің.
@@ -265,6 +283,7 @@ def webhook():
             return jsonify({"status": "duplicate"}), 200
 
         PROCESSED_MESSAGES.add(msg_id)
+        save_data()  # 💾 сохраняем после добавления нового сообщения
 
         user_phone = msg["from"]
         user_msg = msg["text"]["body"]
@@ -282,6 +301,7 @@ def webhook():
                 print(f"⚠️ Клиент {user_phone} уже есть в CRM — заказ не создаём")
 
             USER_STATE[user_phone] = {"in_crm": True}
+            save_data()  # 💾 сохраняем после добавления нового пользователя
 
         # Дальше — логика бота
         reply = get_gpt_response(user_msg, user_phone)
