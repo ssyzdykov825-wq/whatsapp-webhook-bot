@@ -301,18 +301,17 @@ def webhook():
         msg_id = msg["id"]
 
         # 🔹 Проверка на дубль
-        if msg_id in PROCESSED_MESSAGES:
+        if is_processed_message(msg_id):
             print(f"⏩ Сообщение {msg_id} уже обработано — пропускаем")
             return jsonify({"status": "duplicate"}), 200
 
-        PROCESSED_MESSAGES.add(msg_id)
-        save_data()  # 💾 сохраняем после добавления нового сообщения
+        add_processed_message(msg_id)
 
         user_phone = msg["from"]
         user_msg = msg["text"]["body"]
 
         # Если первый контакт — проверяем в CRM
-        if not USER_STATE.get(user_phone):
+        if not get_user_state(user_phone):
             full_name = contacts[0]["profile"].get("name", "Клиент") if contacts else "Клиент"
 
             # Пытаемся создать заказ, если клиента нет
@@ -323,8 +322,7 @@ def webhook():
             else:
                 print(f"⚠️ Клиент {user_phone} уже есть в CRM — заказ не создаём")
 
-            USER_STATE[user_phone] = {"in_crm": True}
-            save_data()  # 💾 сохраняем после добавления нового пользователя
+            set_user_state(user_phone, True)
 
         # Дальше — логика бота
         reply = get_gpt_response(user_msg, user_phone)
