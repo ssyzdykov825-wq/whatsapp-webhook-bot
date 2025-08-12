@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS processed_messages (
 cur.execute("""
 CREATE TABLE IF NOT EXISTS user_state (
     phone TEXT PRIMARY KEY,
-    stage TEXT DEFAULT '0',
+    stage TEXT DEFAULT '0',  # Добавлена колонка stage
     history TEXT DEFAULT '[]',
     last_message TEXT,
     last_time REAL,
@@ -59,8 +59,11 @@ def set_user_state(phone, stage, history, last_message, last_time, followed_up, 
     conn.commit()
 
 def get_user_state(phone):
-    cur.execute("SELECT stage, history, last_message, last_time, followed_up, in_crm FROM user_state WHERE phone = %s;", (phone,))
-    row = cur.fetchone()
+    conn = psycopg2.connect(DATABASE_URL)
+    c = conn.cursor()
+    c.execute("SELECT stage, history, last_message, last_time, followed_up, in_crm FROM user_state WHERE phone=?", (phone,))
+    row = c.fetchone()
+    conn.close()
     if row:
         return {
             "stage": row[0],
@@ -68,7 +71,7 @@ def get_user_state(phone):
             "last_message": row[2],
             "last_time": row[3],
             "followed_up": bool(row[4]),
-            "in_crm": bool(row[5])
+            "in_crm": bool(row[5])  # поле in_crm
         }
     return None
 
