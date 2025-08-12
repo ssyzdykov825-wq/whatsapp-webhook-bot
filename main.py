@@ -35,6 +35,7 @@ HEADERS = {
 }
 
 USER_STATE = {}
+PROCESSED_MESSAGES = set()  # тут храним ID уже обработанных сообщений
 
 SALES_SCRIPT_PROMPT = """
 Сен — Жандос есімді Healvix көз емдеу орталығының тәжірибелі кеңесшісісің. Клиентпен жылы сөйлесіп, есімін сұрап, шын мәнінде көмектесуді мақсат тұтасың. Сен робот емессің — адам секілді, сенімді, жанашыр стилде сөйлесесің.
@@ -256,6 +257,12 @@ def webhook():
             return jsonify({"status": "no_message"}), 200
 
         msg = messages[0]
+        message_id = msg.get("id")  # уникальный ID от WhatsApp
+        if message_id in PROCESSED_MESSAGES:
+            print(f"⏩ Сообщение {message_id} уже обработано — пропускаем")
+            return jsonify({"status": "duplicate"}), 200
+        PROCESSED_MESSAGES.add(message_id)
+
         user_phone = msg["from"]
         user_msg = msg["text"]["body"]
 
