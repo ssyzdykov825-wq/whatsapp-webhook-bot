@@ -22,7 +22,12 @@ CREATE TABLE IF NOT EXISTS processed_messages (
 cur.execute("""
 CREATE TABLE IF NOT EXISTS user_state (
     phone TEXT PRIMARY KEY,
-    in_crm BOOLEAN
+    stage TEXT DEFAULT '0',
+    history TEXT DEFAULT '[]',
+    last_message TEXT,
+    last_time REAL,
+    followed_up INTEGER DEFAULT 0,
+    in_crm INTEGER DEFAULT 0
 );
 """)
 conn.commit()
@@ -35,35 +40,66 @@ def is_processed_message(msg_id):
     cur.execute("SELECT 1 FROM processed_messages WHERE id = %s;", (msg_id,))
     return cur.fetchone() is not None
 
-def set_user_state(phone, in_crm=True):
-    cur.execute("""
-    INSERT INTO user_state (phone, in_crm)
-    VALUES (%s, %s)
-    ON CONFLICT (phone) DO UPDATE SET in_crm = EXCLUDED.in_crm;
-    """, (phone, in_crm))
+def set_user_state(phone, stage, history, last_message, last_time, followed_up, in_crm=False):
+    conn = psycopg2.connect(DATABASE_URL)
+    c = conn.cursor()
+    c.execute("SELECT phone FROM user_state WHERE phone=?", (phone,))
+    exists = c.fetchone()
+    history_json = json.dumps(history)
+    if exists:
+        c.execute("""
+            UPDATE user_state 
+            SET stage=?, history=?, last_message=?, last_time=?, followed_up=?, in_crm=?
+            WHERE phone=?
+        """, (stage, history_json, last_message, last_time, int(followed_up), int(in_crm), phone))
+    else:
+        c.execute("""
+            INSERT INTO user_state (phone, stage, history, last_message, last_time, followed_up, in_crm)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (phone, stage, history_json, last_message, last_time, int(followed_up), int(in_crm)))
     conn.commit()
+    conn.close()
 
 def get_user_state(phone):
-    cur.execute("SELECT in_crm FROM user_state WHERE phone = %s;", (phone,))
-    row = cur.fetchone()
-    return {"in_crm": row[0]} if row else None
-
+    conn = psycopg2.connect(DATABASE_URL)
+    c = conn.cursor()
+    c.execute("SELECT stage, history, last_message, last_time, followed_up, in_crm FROM user_state WHERE phone=?", (phone,))
+    row = c.fetchone()
+    conn.close()
+    if row:
+        return {
+            "stage": row[0],
+            "history": json.loads(row[1]),
+            "last_message": row[2],
+            "last_time": row[3],
+            "followed_up": bool(row[4]),
+            "in_crm": bool(row[5])
+        }
+    return None
 
 def process_new_lead(name, phone):
     """Обработка нового лида из CRM или бота"""
 
-    # Проверяем наличие клиента в CRM
-    if client_exists(phone):
-        print(f"⚠️ Клиент {phone} уже есть в CRM — заказ не создаём")
+    # Проверяем в локальной БД
+    user_data = get_user_state(phone)
+    if user_data and user_data.get("in_crm"):
+        print(f"⚠️ {phone} уже был отправлен в CRM, пропускаем")
         return None
 
-    # Если клиента нет — создаём заказ
+    # Проверяем напрямую в CRM
+    if client_exists(phone):
+        print(f"⚠️ {phone} найден в CRM, сохраняем флаг")
+        set_user_state(phone, stage="0", history=[], last_message=None, last_time=None, followed_up=False, in_crm=True)
+        return None
+
+    # Если нигде нет — создаём
     order_id = create_order(name, phone)
     if order_id:
-        print(f"✅ Заказ {order_id} создан ({name}, {phone})")
+        print(f"✅ Заказ {order_id} создан для {name} ({phone})")
+        set_user_state(phone, stage="0", history=[], last_message=None, last_time=None, followed_up=False, in_crm=True)
         return order_id
     else:
-        print(f"❌ Не удалось создать заказ для {name}, {phone}")
+        print(f"❌ Ошибка создания заказа для {name} ({phone})")
         return None
 
 
@@ -224,6 +260,59 @@ def send_whatsapp_message(phone, message):
     print(f"📤 Ответ от сервера: {response.status_code} {response.text}")
     return response
 
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS user_state (
+            phone TEXT PRIMARY KEY,
+            stage TEXT DEFAULT '0',
+            history TEXT DEFAULT '[]',
+            last_message TEXT,
+            last_time REAL,
+            followed_up INTEGER DEFAULT 0
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def get_user_state(phone):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT stage, history, last_message, last_time, followed_up FROM user_state WHERE phone=?", (phone,))
+    row = c.fetchone()
+    conn.close()
+    if row:
+        return {
+            "stage": row[0],
+            "history": json.loads(row[1]),
+            "last_message": row[2],
+            "last_time": row[3],
+            "followed_up": bool(row[4])
+        }
+    return None
+
+def set_user_state(phone, stage, history, last_message, last_time, followed_up):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT phone FROM user_state WHERE phone=?", (phone,))
+    exists = c.fetchone()
+    history_json = json.dumps(history)
+    if exists:
+        c.execute("""
+            UPDATE user_state 
+            SET stage=?, history=?, last_message=?, last_time=?, followed_up=?
+            WHERE phone=?
+        """, (stage, history_json, last_message, last_time, int(followed_up), phone))
+    else:
+        c.execute("""
+            INSERT INTO user_state (phone, stage, history, last_message, last_time, followed_up)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (phone, stage, history_json, last_message, last_time, int(followed_up)))
+    conn.commit()
+    conn.close()
+
+
 def get_gpt_response(user_msg, user_phone):
     try:
         user_data = get_user_state(user_phone) or {
@@ -330,7 +419,7 @@ def webhook():
             else:
                 print(f"⚠️ Клиент {user_phone} уже есть в CRM — заказ не создаём")
 
-            set_user_state(user_phone, True)
+            set_user_state(user_phone, stage="0", history=[], last_message=None, last_time=None, followed_up=False, in_crm=True)
 
         # Дальше — логика бота
         reply = get_gpt_response(user_msg, user_phone)
