@@ -437,6 +437,15 @@ def start_followup_thread():
         thread.start()
         print("🟢 follow-up checker запущен")
 
+def is_processed_message(msg_id):
+    """Проверяет, было ли сообщение уже обработано"""
+    conn = psycopg2.connect(DATABASE_URL)
+    c = conn.cursor()
+    c.execute("SELECT 1 FROM processed_messages WHERE id = %s;", (msg_id,))
+    result = c.fetchone()
+    conn.close()
+    return result is not None
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
@@ -474,7 +483,7 @@ def webhook():
             else:
                 print(f"⚠️ Клиент {user_phone} уже есть в CRM — заказ не создаём")
 
-            set_user_state(user_phone, stage="0", history=[], last_message=None, last_time=None, followed_up=False, in_crm=True)
+            set_user_state(user_phone, stage="0", history=[], last_message=None, last_time=None, followed_up=False)
 
         # Дальше — логика бота
         reply = get_gpt_response(user_msg, user_phone)
