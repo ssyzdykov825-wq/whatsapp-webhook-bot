@@ -4,7 +4,24 @@ import threading
 import requests
 from flask import Flask, request, jsonify
 from openai import OpenAI
-from salesrender_api import create_order
+from salesrender_api import create_order, client_exists
+
+def process_new_lead(name, phone):
+    """Обработка нового лида из CRM или бота"""
+
+    # Проверяем наличие клиента в CRM
+    if client_exists(phone):
+        print(f"⚠️ Клиент {phone} уже есть в CRM — заказ не создаём")
+        return None  # Не создаём заказ, бот продолжает работать
+
+    # Если клиента нет — создаём заказ
+    order_id = create_order(name, phone)
+    if order_id:
+        print(f"✅ Заказ {order_id} создан ({name}, {phone})")
+        return order_id
+    else:
+        print(f"❌ Не удалось создать заказ для {name}, {phone}")
+        return None
 
 app = Flask(__name__)
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
@@ -242,21 +259,21 @@ def webhook():
         user_phone = msg["from"]
         user_msg = msg["text"]["body"]
 
-        # Проверяем — это первый раз или уже был в CRM
-        if not USER_STATE.get(user_phone):  # если нет записи — значит новый контакт
+        # Если первый контакт — проверяем в CRM
+        if not USER_STATE.get(user_phone):
             full_name = contacts[0]["profile"].get("name", "Клиент") if contacts else "Клиент"
-            order_id = create_order(full_name, user_phone)
+
+            # Пытаемся создать заказ, если клиента нет
+            order_id = process_new_lead(full_name, user_phone)
+
             if order_id:
                 print(f"✅ Новый заказ {order_id} создан ({full_name}, {user_phone})")
             else:
-                print("❌ Ошибка создания заказа в SalesRender")
+                print(f"⚠️ Клиент {user_phone} уже есть в CRM — заказ не создаём")
 
-            # Сохраняем, что уже отправляли в CRM
             USER_STATE[user_phone] = {"in_crm": True}
 
-            return jsonify({"status": "sent_to_crm"}), 200
-
-        # Если контакт уже есть — работаем по скрипту
+        # Дальше — логика бота
         reply = get_gpt_response(user_msg, user_phone)
         for part in split_message(reply):
             send_whatsapp_message(user_phone, part)
