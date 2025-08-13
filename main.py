@@ -10,14 +10,13 @@ from salesrender_api import create_order, client_exists  # твои функци
 
 # ================== ENV ==================
 DATABASE_URL    = os.environ.get("DATABASE_URL")       # postgres://user:pass@host:port/db
-D360_API_KEY    = os.environ.get("D360_API_KEY")       # ключ 360dialog
 OPENAI_API_KEY  = os.environ.get("OPENAI_API_KEY")     # ключ OpenAI
+WHATSAPP_API_KEY = os.environ.get("WHATSAPP_API_KEY")  # ключ 360dialog
 
-# 360dialog endpoint
-D360_API_KEY = os.environ.get("WHATSAPP_API_KEY")
-HEADERS_360 = {
+WHATSAPP_API_URL = "https://waba-v2.360dialog.io/messages"
+HEADERS = {
     "Content-Type": "application/json",
-    "D360-API-KEY": D360_API_KEY
+    "D360-API-KEY": WHATSAPP_API_KEY
 }
 
 # ================== APP / GPT ==================
