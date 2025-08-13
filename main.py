@@ -71,7 +71,7 @@ BEGIN
         ALTER COLUMN followed_up TYPE BOOLEAN USING (followed_up::boolean);
     END IF;
 END $$;
-
+""")
 
 init_db()
 
