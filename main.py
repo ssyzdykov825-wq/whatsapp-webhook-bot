@@ -169,6 +169,7 @@ def process_new_lead(name: str, phone: str):
 # ================== WhatsApp (360dialog) ==================
 def send_whatsapp_360(phone: str, message: str):
     payload = {
+        "messaging_product": "whatsapp",
         "to": phone,
         "type": "text",
         "text": {"body": message}
