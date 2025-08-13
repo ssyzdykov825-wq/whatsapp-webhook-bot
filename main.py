@@ -194,34 +194,32 @@ STAGE_PROMPTS = {
 }
 
 def get_gpt_response(user_msg: str, user_phone: str) -> str:
-    # получаем текущее состояние пользователя
-    user_data = get_user_state(user_phone)
-    if not user_data:
-        user_data = {
-            "history": [],
-            "stage": "0",
-            "last_message": None,
-            "last_time": None,
-            "followed_up": False,
-            "in_crm": False
-        }
+    # Получаем текущее состояние пользователя
+    user_data = get_user_state(user_phone) or {
+        "history": [],
+        "stage": "0",
+        "last_message": None,
+        "last_time": None,
+        "followed_up": False,
+        "in_crm": False
+    }
 
     history = user_data["history"]
     stage = user_data["stage"]
 
-    # формируем системный prompt с учетом текущего stage
+    # Формируем системный prompt с учётом текущего stage
     prompt = SALES_SCRIPT_PROMPT + "\n\n" + STAGE_PROMPTS.get(stage, "")
 
-    # собираем историю в виде сообщений для GPT
+    # Собираем историю для GPT
     messages = [{"role": "system", "content": prompt}]
-    for item in history[-20:]:  # максимум 20 последних сообщений
+    for item in history[-20:]:
         if "user" in item:
             messages.append({"role": "user", "content": item["user"]})
         if "bot" in item:
             messages.append({"role": "assistant", "content": item["bot"]})
     messages.append({"role": "user", "content": user_msg})
 
-    # запрос к GPT
+    # Запрос к GPT
     resp = client.chat.completions.create(
         model="gpt-4o",
         messages=messages,
@@ -229,13 +227,23 @@ def get_gpt_response(user_msg: str, user_phone: str) -> str:
     )
     reply = resp.choices[0].message.content.strip()
 
-    # следующий stage (не выше 6)
-    try:
-        next_stage = str(min(int(stage) + 1, 6))
-    except Exception:
-        next_stage = stage
+    # Умная логика перехода stage
+    next_stage = stage
 
-    # сохраняем историю (до 20 последних пар)
+    if stage == "0":
+        # Если приветствие прошло и есть конкретный вопрос/запрос
+        if any(word in user_msg.lower() for word in ["цена", "стоимость", "услуга", "оформить"]):
+            next_stage = "1"
+    elif stage == "1":
+        # Если пользователь дал детали заявки или бюджет
+        if any(word in user_msg.lower() for word in ["хочу", "заказать", "оформить"]):
+            next_stage = "2"
+    elif stage == "2":
+        # Продолжаем по сценарию, например после звонка или предложения
+        next_stage = "3"  # пример, можно усложнить
+    # stage 3–6 можно менять аналогично по бизнес-логике
+
+    # Сохраняем историю (до 20 последних пар)
     new_history = (history + [{"user": user_msg, "bot": reply}])[-20:]
     set_user_state(
         phone=user_phone,
