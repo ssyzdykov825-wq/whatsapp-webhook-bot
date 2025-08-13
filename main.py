@@ -281,22 +281,30 @@ def webhook():
         user_msg = msg["text"]["body"]
         full_name = contacts[0]["profile"].get("name", "Клиент") if contacts else "Клиент"
 
-        # первый контакт этого номера — проверка/создание в CRM
-        if not get_user_state(user_phone):
-            order_id = process_new_lead(full_name, user_phone)
+        # нормализуем номер (только цифры)
+        norm_phone = "".join(filter(str.isdigit, user_phone))
+        
+        # проверяем текущее состояние пользователя
+        user_state = get_user_state(norm_phone)
+        if not user_state:
+            # новый клиент
+            order_id = process_new_lead(full_name, norm_phone)
             if order_id:
-                print(f"✅ Новый заказ {order_id} создан ({full_name}, {user_phone})")
+                print(f"✅ Новый заказ {order_id} создан ({full_name}, {norm_phone})")
             else:
-                print(f"ℹ️ Клиент {user_phone} уже есть в CRM или заказ не создан")
-            # гарантируем стартовую запись (если process_new_lead не создал)
-            set_user_state(user_phone, stage="0", history=[], last_message=None, last_time=None, followed_up=False, in_crm=True)
+                print(f"ℹ️ Клиент {norm_phone} уже есть в CRM или заказ не создан")
+            # создаём стартовую запись, но stage = "0" только для нового
+            set_user_state(norm_phone, stage="0", history=[], last_message=None, last_time=None, followed_up=False, in_crm=True)
+        else:
+            # уже есть состояние — используем существующий stage и историю
+            print(f"ℹ️ Клиент {norm_phone} уже в базе, stage={user_state['stage']}")
 
-        # GPT ответ
-        reply = get_gpt_response(user_msg, user_phone)
+        # GPT ответ с учётом истории
+        reply = get_gpt_response(user_msg, norm_phone)
 
         # отправляем в WhatsApp (режем на части при необходимости)
         for part in split_message(reply):
-            send_whatsapp_360(user_phone, part)
+            send_whatsapp_360(norm_phone, part)
 
         return jsonify({"status": "ok"}), 200
 
