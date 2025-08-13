@@ -193,6 +193,8 @@ STAGE_PROMPTS = {
     "6": "Диалог завершён, вежливо отвечай коротко."
 }
 
+GREETING_KEYWORDS = ["привет", "здравствуй", "hi", "hello", "сәлем", "salem"]
+
 def is_meaningful_message(msg: str) -> bool:
     msg_clean = msg.strip().lower()
     if len(msg_clean) <= 2:
