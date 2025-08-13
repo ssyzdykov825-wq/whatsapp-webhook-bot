@@ -195,14 +195,16 @@ STAGE_PROMPTS = {
 
 def get_gpt_response(user_msg: str, user_phone: str) -> str:
     # получаем текущее состояние пользователя
-    user_data = get_user_state(user_phone) or {
-        "history": [],
-        "stage": "0",
-        "last_message": None,
-        "last_time": None,
-        "followed_up": False,
-        "in_crm": False
-    }
+    user_data = get_user_state(user_phone)
+    if not user_data:
+        user_data = {
+            "history": [],
+            "stage": "0",
+            "last_message": None,
+            "last_time": None,
+            "followed_up": False,
+            "in_crm": False
+        }
 
     history = user_data["history"]
     stage = user_data["stage"]
@@ -212,7 +214,7 @@ def get_gpt_response(user_msg: str, user_phone: str) -> str:
 
     # собираем историю в виде сообщений для GPT
     messages = [{"role": "system", "content": prompt}]
-    for item in history[-20:]:  # учитываем максимум 20 последних сообщений
+    for item in history[-20:]:  # максимум 20 последних сообщений
         if "user" in item:
             messages.append({"role": "user", "content": item["user"]})
         if "bot" in item:
@@ -221,19 +223,19 @@ def get_gpt_response(user_msg: str, user_phone: str) -> str:
 
     # запрос к GPT
     resp = client.chat.completions.create(
-        model="gpt-4o",  # можно gpt-4o-mini
+        model="gpt-4o",
         messages=messages,
         temperature=0.7
     )
     reply = resp.choices[0].message.content.strip()
 
-    # вычисляем следующий stage (не выше 6)
+    # следующий stage (не выше 6)
     try:
         next_stage = str(min(int(stage) + 1, 6))
     except Exception:
-        next_stage = "1"
+        next_stage = stage
 
-    # сохраняем память (до 20 последних пар user-bot)
+    # сохраняем историю (до 20 последних пар)
     new_history = (history + [{"user": user_msg, "bot": reply}])[-20:]
     set_user_state(
         phone=user_phone,
@@ -258,7 +260,6 @@ def webhook():
         change = entry.get("changes", [])[0]
         value = change.get("value", {})
 
-        # статусы доставок (sent/delivered/read) — пропускаем
         if value.get("statuses") and not value.get("messages"):
             return jsonify({"status": "status_event"}), 200
 
@@ -271,13 +272,11 @@ def webhook():
         msg = messages[0]
         msg_id = msg["id"]
 
-        # дубль?
         if is_message_processed(msg_id):
             print(f"⏩ Сообщение {msg_id} уже обработано — пропускаем")
             return jsonify({"status": "duplicate"}), 200
         add_processed_message(msg_id)
 
-        # поддерживаем только текст
         if msg.get("type") != "text":
             print("⚠️ Неподдерживаемый тип:", msg.get("type"))
             return jsonify({"status": "unsupported_type"}), 200
@@ -298,7 +297,6 @@ def webhook():
                 print(f"✅ Новый заказ {order_id} создан ({full_name}, {norm_phone})")
             else:
                 print(f"ℹ️ Клиент {norm_phone} уже есть в CRM или заказ не создан")
-            # создаём стартовую запись только один раз для нового пользователя
             set_user_state(
                 norm_phone,
                 stage="0",
@@ -311,10 +309,10 @@ def webhook():
         else:
             print(f"ℹ️ Клиент {norm_phone} уже в базе, stage={user_state['stage']}, история длина={len(user_state['history'])}")
 
-        # GPT ответ с учётом истории и stage из базы
+        # GPT ответ с учётом истории
         reply = get_gpt_response(user_msg, norm_phone)
 
-        # отправляем в WhatsApp (режем на части при необходимости)
+        # отправляем в WhatsApp (разбиваем на части при необходимости)
         for part in split_message(reply):
             send_whatsapp_360(norm_phone, part)
 
