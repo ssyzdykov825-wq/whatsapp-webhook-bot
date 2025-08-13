@@ -322,8 +322,12 @@ STAGE_PROMPTS = {
     "6": "Қандай да бір күмән туындаса — нақты түсіндіріп берем. Сенімсіздік, баға, отбасы мәселесі — бәріне жауап дайын. Мысалы: 'Каспийіңізде 5-10 мың бар ма? Бүгін жазсақ, ертең бастап кетесіз.' 📲💸"
 }
 
+# DATABASE_URL, WHATSAPP_API_URL, HEADERS, client, SALES_SCRIPT_PROMPT, STAGE_PROMPTS
+
 def split_message(text, max_length=1000):
+    """Делим длинный текст на части по предложениям (или жёстко по длине)."""
     parts = []
+    text = (text or "").strip()
     while len(text) > max_length:
         split_index = text[:max_length].rfind(". ")
         if split_index == -1:
@@ -334,90 +338,126 @@ def split_message(text, max_length=1000):
         parts.append(text)
     return parts
 
-def send_whatsapp_message(phone, message):
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": phone,
-        "type": "text",
-        "text": {"body": message}
-    }
-    response = requests.post(WHATSAPP_API_URL, headers=HEADERS, json=payload)
-    print(f"📤 Ответ от сервера: {response.status_code} {response.text}")
-    return response
+
+def send_whatsapp_message(phone, message, max_length=1000, pause_sec=0.2):
+    """Отправляет сообщение в WhatsApp, автоматически разбивая на части."""
+    responses = []
+    for chunk in split_message(message, max_length=max_length):
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": phone,
+            "type": "text",
+            "text": {"body": chunk}
+        }
+        resp = requests.post(WHATSAPP_API_URL, headers=HEADERS, json=payload)
+        print(f"📤 Ответ от сервера: {resp.status_code} {resp.text}")
+        responses.append(resp)
+        time.sleep(pause_sec)
+    return responses[-1] if responses else None
+
 
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
+    """Инициализация таблицы user_state в PostgreSQL (не SQLite)."""
+    conn = psycopg2.connect(DATABASE_URL)
     c = conn.cursor()
     c.execute("""
         CREATE TABLE IF NOT EXISTS user_state (
-            phone TEXT PRIMARY KEY,
-            stage TEXT DEFAULT '0',
-            history TEXT DEFAULT '[]',
+            phone        TEXT PRIMARY KEY,
+            stage        TEXT DEFAULT '0',
+            history      TEXT DEFAULT '[]',
             last_message TEXT,
-            last_time REAL,
-            followed_up INTEGER DEFAULT 0
-        )
+            last_time    DOUBLE PRECISION,
+            followed_up  BOOLEAN DEFAULT FALSE,
+            in_crm       BOOLEAN DEFAULT FALSE
+        );
     """)
     conn.commit()
     conn.close()
 
+
 def get_user_state(phone):
-    conn = psycopg2.connect(DATABASE_URL)  # Используем PostgreSQL
+    """Читает состояние пользователя из PostgreSQL."""
+    conn = psycopg2.connect(DATABASE_URL)
     c = conn.cursor()
-    c.execute("SELECT stage, history, last_message, last_time, followed_up, in_crm FROM user_state WHERE phone=%s;", (phone,))
+    c.execute("""
+        SELECT stage, history, last_message, last_time, followed_up, in_crm
+        FROM user_state
+        WHERE phone=%s;
+    """, (phone,))
     row = c.fetchone()
     conn.close()
+
     if row:
         return {
             "stage": row[0],
-            "history": json.loads(row[1]),  # Преобразуем строку в список
+            "history": json.loads(row[1] or "[]"),
             "last_message": row[2],
             "last_time": row[3],
             "followed_up": bool(row[4]),
-            "in_crm": bool(row[5])
+            "in_crm": bool(row[5]),
         }
     return None
 
+
 def set_user_state(phone, stage, history, last_message, last_time, followed_up, in_crm=False):
-    conn = psycopg2.connect(DATABASE_URL)  # Используем PostgreSQL
+    """Создаёт или обновляет состояние пользователя в PostgreSQL."""
+    conn = psycopg2.connect(DATABASE_URL)
     c = conn.cursor()
+
     c.execute("SELECT phone FROM user_state WHERE phone=%s;", (phone,))
     exists = c.fetchone()
-    history_json = json.dumps(history)  # Преобразуем список в строку
-if exists:
-    c.execute("""
-        UPDATE user_state 
-        SET stage=%s, history=%s, last_message=%s, last_time=%s, followed_up=%s, in_crm=%s
-        WHERE phone=%s
-    """, (stage, history_json, last_message, last_time, bool(followed_up), bool(in_crm), phone))
-else:
-    c.execute("""
-        INSERT INTO user_state (phone, stage, history, last_message, last_time, followed_up, in_crm)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-    """, (phone, stage, history_json, last_message, last_time, bool(followed_up), bool(in_crm)))
+
+    history_json = json.dumps(history, ensure_ascii=False)
+
+    if exists:
+        c.execute("""
+            UPDATE user_state
+            SET stage=%s, history=%s, last_message=%s, last_time=%s, followed_up=%s, in_crm=%s
+            WHERE phone=%s;
+        """, (stage, history_json, last_message, last_time, bool(followed_up), bool(in_crm), phone))
+    else:
+        c.execute("""
+            INSERT INTO user_state (phone, stage, history, last_message, last_time, followed_up, in_crm)
+            VALUES (%s, %s, %s, %s, %s, %s, %s);
+        """, (phone, stage, history_json, last_message, last_time, bool(followed_up), bool(in_crm)))
+
     conn.commit()
     conn.close()
 
 
 def get_gpt_response(user_msg, user_phone):
+    """Генерирует ответ GPT с учётом истории из БД и обновляет состояние."""
     try:
         user_data = get_user_state(user_phone) or {
             "history": [],
             "stage": "0",
             "last_message": None,
             "last_time": None,
-            "followed_up": False
+            "followed_up": False,
+            "in_crm": False,
         }
 
         history = user_data["history"]
         stage = user_data["stage"]
 
-        prompt = SALES_SCRIPT_PROMPT + "\n\n" + STAGE_PROMPTS.get(stage, "")
+        # Безопасно инкрементируем stage (если вдруг в БД не цифра)
+        try:
+            next_stage_num = int(stage)
+        except (TypeError, ValueError):
+            next_stage_num = 0
+        next_stage_num = min(next_stage_num + 1, 6)
+        next_stage = str(next_stage_num)
 
+        # Готовим промпт
+        prompt = (SALES_SCRIPT_PROMPT or "") + "\n\n" + (STAGE_PROMPTS.get(stage, "") if 'STAGE_PROMPTS' in globals() else "")
+
+        # История в формате chat.completions
         messages = [{"role": "system", "content": prompt}]
         for item in history:
-            messages.append({"role": "user", "content": item["user"]})
-            messages.append({"role": "assistant", "content": item["bot"]})
+            if "user" in item:
+                messages.append({"role": "user", "content": item["user"]})
+            if "bot" in item:
+                messages.append({"role": "assistant", "content": item["bot"]})
         messages.append({"role": "user", "content": user_msg})
 
         response = client.chat.completions.create(
@@ -427,18 +467,21 @@ def get_gpt_response(user_msg, user_phone):
         )
         reply = response.choices[0].message.content.strip()
 
-        next_stage = str(int(stage) + 1) if int(stage) < 6 else "6"
+        # Ограничиваем историю последними 5 ходами + текущий
+        new_history = (history[-5:] if len(history) > 5 else history) + [{"user": user_msg, "bot": reply}]
 
         set_user_state(
             phone=user_phone,
             stage=next_stage,
-            history=history[-5:] + [{"user": user_msg, "bot": reply}],
+            history=new_history,
             last_message=user_msg,
             last_time=time.time(),
-            followed_up=False
+            followed_up=False,   # при необходимости меняй логику
+            in_crm=user_data.get("in_crm", False)
         )
 
         return reply
+
     except Exception as e:
         print(f"❌ GPT қатесі: {e}")
         return "Кешіріңіз, қазір жауап бере алмаймын. Кейінірек көріңіз."
