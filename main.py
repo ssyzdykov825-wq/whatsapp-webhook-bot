@@ -2,7 +2,7 @@ import os
 import time
 import threading
 import requests
-import json # Добавлено для JSON-сериализации истории
+import json
 from flask import Flask, request, jsonify
 from openai import OpenAI
 from datetime import datetime, timedelta
@@ -21,13 +21,10 @@ from state_manager import (
 # --- Dummy salesrender_api functions (remove if you have a real file) ---
 def create_order(name, phone):
     print(f"SIMULATING CRM: Creating order for {name} ({phone})")
-    # In a real scenario, this would call your SalesRender API to create an order
     return f"ORDER_{int(time.time())}" # Simulate an order ID
 
 def client_exists(phone):
     print(f"SIMULATING CRM: Checking if client {phone} exists.")
-    # In a real scenario, this would check your SalesRender CRM
-    # For now, let's say it doesn't exist to trigger order creation
     return False
 # --- End of dummy functions ---
 
@@ -50,8 +47,7 @@ PROCESSED_MESSAGES = set()
 
 # SalesRender CRM Config
 SALESRENDER_URL = "https://de.backend.salesrender.com/companies/1123/CRM"
-# IMPORTANT: This token is visible in your old code. In production, use os.environ.get()
-SALESRENDER_TOKEN = os.environ.get("SALESRENDER_TOKEN", "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXJlbmRlci5jb20vIiwiYXVkIjoiQ1JNIyIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc")
+SALESRENDER_TOKEN = os.environ.get("SALESRENDER_TOKEN", "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXNyZW5kZXIuY29tLyIsImF1ZCI6IkNSTSIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc")
 
 
 # ==============================
@@ -255,7 +251,7 @@ SALES_SCRIPT_PROMPT = """
    - Ойлану десе: «Ойланыңыз, бірақ асқынып кетпеуі үшін бүгін шешім қабылдаған дұрыс.»  
    - Сенімсіздік: «Сертификат, отзыв, гарантия бәрі бар. Нәтиже болмаса – қайтарып береміз.»  
    - Ақша жоқ десе: «Бөліп төлеу бар. Отбасыңыздан көмек сұрап көрдіңіз бе?»  
-   - Отбасымен ақылдасу: «Көз ауырса, сезетін – өзіңіз. Шешімді де өзіңіз қабылдауыңыз керек.»  
+   - Отбасымен ақылдасу: «Көз ауырса, сезетін – сіз. Отбасы тек сырттай көреді, ал қиындықты сезінетін – өзіңіз.»  
    - Қорқам десе: «Түсінем. Бірақ бұл өнім – табиғи, Аллаға тәуекел етіп көріңіз. Результат болмаса – тоқтатасыз.»
 
 7. **Дожим / Жабу** «Онда былай жасайық: мен өз атымнан жеңілдік жасап көрейін. Қазір Каспийде 5-10 мың бар ма?»  
@@ -516,14 +512,17 @@ def home():
 # ==============================
 # Application Startup
 # ==============================
-if __name__ == "__main__":
-    init_db() # Initialize the database
-    load_cache_from_db() # Load all existing clients into cache
 
-    # Start background threads for follow-up and cleanup
-    # Pass send_whatsapp_message function as an argument to follow_up_checker
-    threading.Thread(target=follow_up_checker, args=(send_whatsapp_message,), daemon=True).start()
-    threading.Thread(target=cleanup_old_clients, daemon=True).start()
-    
-    print("Starting Flask app...")
+# ✨ ЭТОТ КОД ДОЛЖЕН БЫТЬ ВЫПОЛНЕН ПРИ ЗАПУСКЕ GUNICORN ✨
+init_db() # Initialize the database
+load_cache_from_db() # Load all existing clients into cache
+
+# Start background threads for follow-up and cleanup
+# Pass send_whatsapp_message function as an argument to follow_up_checker
+threading.Thread(target=follow_up_checker, args=(send_whatsapp_message,), daemon=True).start()
+threading.Thread(target=cleanup_old_clients, daemon=True).start()
+
+# For local development, keep the if __name__ == "__main__" block
+if __name__ == "__main__":
+    print("DEBUG: Running app in local development mode.")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
