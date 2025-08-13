@@ -175,7 +175,7 @@ def send_whatsapp_360(phone: str, message: str):
         "text": {"body": message}
     }
     try:
-        resp = requests.post(WHATSAPP_API_URL, headers=HEADERS_360, json=payload, timeout=30)
+        resp = requests.post(WHATSAPP_API_URL, headers=HEADERS, json=payload, timeout=30)
         print(f"📤 Ответ от 360dialog: {resp.status_code} {resp.text}")
         return resp
     except Exception as e:
