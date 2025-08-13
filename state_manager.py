@@ -87,35 +87,49 @@ def load_cache_from_db():
                 conn.close()
 
 def persist_client_to_db(phone, state):
+    """Saves a single client's state to the database (upsert operation)."""
     with state_lock:
         conn = None
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
             
-            cursor.execute("SELECT 1 FROM clients WHERE phone = %s", (phone,))
+            # Логируем запрос на SELECT
+            select_query = "SELECT 1 FROM clients WHERE phone = %s"
+            print(f"DEBUG SM: Checking existence for phone: {phone} with query: {select_query}") # Добавлено
+
+            cursor.execute(select_query, (phone,))
             exists = cursor.fetchone() is not None
 
             if exists:
-                cursor.execute("""
+                update_query = """
                     UPDATE clients
                     SET name=%s, stage=%s, history=%s, last_message_time=%s, followed_up=%s, in_crm=%s
                     WHERE phone=%s
-                """, (
+                """
+                cursor.execute(update_query, (
                     state["name"], state["stage"], json.dumps(state["history"], ensure_ascii=False),
                     state["last_time"], state["followed_up"], state["in_crm"], phone
                 ))
+                print(f"DEBUG SM: Client {phone} state UPDATED in DB. Stage: {state['stage']}.")
             else:
-                cursor.execute("""
+                insert_query = """
                     INSERT INTO clients (phone, name, stage, history, last_message_time, followed_up, in_crm)
                     VALUES (%s, %s, %s, %s, %s, %s, %s)
-                """, (
+                """
+                cursor.execute(insert_query, (
                     phone, state["name"], state["stage"], json.dumps(state["history"], ensure_ascii=False),
                     state["last_time"], state["followed_up"], state["in_crm"]
                 ))
+                print(f"DEBUG SM: Client {phone} state INSERTED into DB. Stage: {state['stage']}.")
             conn.commit()
+            print(f"DEBUG SM: DB commit successful for {phone}.") # Добавлено
         except Exception as e:
-            print(f"❌ Error persisting client {phone} to PostgreSQL: {e}")
+            # Оставим raise для более строгой диагностики
+            print(f"❌ ERROR SM: Failed to persist client {phone} to PostgreSQL: {e}")
+            import traceback
+            traceback.print_exc() # Добавлено для полного стека ошибок
+            raise # ✨ Важно: снова выбрасываем ошибку, чтобы увидеть ее полностью в логах ✨
         finally:
             if conn:
                 conn.close()
