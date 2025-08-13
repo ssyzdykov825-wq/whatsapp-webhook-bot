@@ -2,92 +2,224 @@ import os
 import time
 import threading
 import requests
-import sqlite3
+import json # Добавлено для JSON-сериализации истории
 from flask import Flask, request, jsonify
 from openai import OpenAI
-from salesrender_api import create_order, client_exists
 from datetime import datetime, timedelta
 
+# Import the new state management functions
+from state_manager import (
+    init_db, load_cache_from_db,
+    get_client_state, save_client_state, client_in_db_or_cache,
+    follow_up_checker, cleanup_old_clients,
+    MAX_HISTORY_FOR_GPT # Used in build_messages_for_gpt
+)
+
+# NOTE: You'll need to create salesrender_api.py if it doesn't exist
+# and ensure it contains create_order and client_exists functions.
+# For demonstration, I'll add dummy functions here if not provided.
+# --- Dummy salesrender_api functions (remove if you have a real file) ---
+def create_order(name, phone):
+    print(f"SIMULATING CRM: Creating order for {name} ({phone})")
+    # In a real scenario, this would call your SalesRender API to create an order
+    return f"ORDER_{int(time.time())}" # Simulate an order ID
+
+def client_exists(phone):
+    print(f"SIMULATING CRM: Checking if client {phone} exists.")
+    # In a real scenario, this would check your SalesRender CRM
+    # For now, let's say it doesn't exist to trigger order creation
+    return False
+# --- End of dummy functions ---
+
+# ==============================
+# Config
+# ==============================
 app = Flask(__name__)
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 WHATSAPP_API_URL = "https://waba-v2.360dialog.io/messages"
-WHATSAPP_API_KEY = os.environ.get("WHATSAPP_API_KEY")
+WHATSAPP_API_KEY = os.environ.get("WHATSAPP_API_KEY") # Ensure this is set as an env var
 
 HEADERS = {
     "Content-Type": "application/json",
     "D360-API-KEY": WHATSAPP_API_KEY
 }
 
-USER_STATE = {}
-PROCESSED_MESSAGES = set()  # для хранения ID уже обработанных сообщений
-last_sent = {}  # для контроля повторов follow-up
+# In-memory set for message ID deduplication (volatile, resets on app restart)
+PROCESSED_MESSAGES = set()
 
-# ==== База данных ====
-DB_PATH = "clients.db"
+# SalesRender CRM Config
+SALESRENDER_URL = "https://de.backend.salesrender.com/companies/1123/CRM"
+# IMPORTANT: This token is visible in your old code. In production, use os.environ.get()
+SALESRENDER_TOKEN = os.environ.get("SALESRENDER_TOKEN", "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXJlbmRlci5jb20vIiwiYXVkIjoiQ1JNIyIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc")
 
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS clients (
-        phone TEXT PRIMARY KEY,
-        name TEXT,
-        in_crm INTEGER DEFAULT 0,
-        last_message_time REAL
-    )
-    """)
-    conn.commit()
-    conn.close()
 
-def client_in_db(phone):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT in_crm FROM clients WHERE phone = ?", (phone,))
-    row = cursor.fetchone()
-    conn.close()
-    return bool(row[0]) if row else False
+# ==============================
+# SalesRender Utilities
+# ==============================
+def fetch_order_from_crm(order_id):
+    """Fetches order details from SalesRender CRM using GraphQL."""
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": SALESRENDER_TOKEN
+    }
+    query = {
+        "query": f"""
+        query {{
+            ordersFetcher(filters: {{ include: {{ ids: ["{order_id}"] }} }}) {{
+                orders {{
+                    id
+                    data {{
+                        humanNameFields {{ value {{ firstName lastName }} }}
+                        phoneFields {{ value {{ international raw national }} }}
+                    }}
+                }}
+            }}
+        }}
+        """
+    }
+    try:
+        response = requests.post(SALESRENDER_URL, headers=headers, json=query, timeout=10)
+        response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+        data = response.json().get("data", {}).get("ordersFetcher", {}).get("orders", [])
+        return data[0] if data else None
+    except Exception as e:
+        print(f"❌ CRM fetch error: {e}")
+        return None
 
-def add_client_to_db(phone, name, in_crm=False):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT OR IGNORE INTO clients (phone, name, in_crm) VALUES (?, ?, ?)
-    """, (phone, name, int(in_crm)))
-    conn.commit()
-    conn.close()
-
-def update_last_message_time(phone):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE clients SET last_message_time = ? WHERE phone = ?", (time.time(), phone))
-    conn.commit()
-    conn.close()
-
-init_db()
-
-# ==== Функция обработки нового лида ====
 def process_new_lead(name, phone):
-    """Обработка нового лида из CRM или бота"""
-    if client_in_db(phone):
-        print(f"⚠️ Клиент {phone} уже есть в базе — заказ не создаём")
+    """
+    Processes a new lead: checks CRM, creates order if needed, and updates client state.
+    This function is adapted from the NEW code for robustness.
+    """
+    if client_in_db_or_cache(phone):
+        print(f"⚠️ Клиент {phone} уже в базе/кэше, пропускаем создание заказа.")
         return None
 
+    # Check if client exists in CRM
     if client_exists(phone):
-        print(f"⚠️ Клиент {phone} уже есть в CRM — заказ не создаём")
-        add_client_to_db(phone, name, in_crm=True)
+        print(f"⚠️ Клиент {phone} уже есть в CRM, обновляем состояние.")
+        save_client_state(phone, name=name, in_crm=True)
         return None
 
+    # If client not in CRM, create order
     order_id = create_order(name, phone)
     if order_id:
-        print(f"✅ Заказ {order_id} создан ({name}, {phone})")
-        add_client_to_db(phone, name, in_crm=True)
+        print(f"✅ Заказ {order_id} создан для {name}, {phone}. Обновляем состояние.")
+        save_client_state(phone, name=name, in_crm=True)
         return order_id
     else:
-        print(f"❌ Не удалось создать заказ для {name}, {phone}")
+        print(f"❌ Не удалось создать заказ для {name}, {phone}. Создаем запись клиента без CRM связи.")
+        save_client_state(phone, name=name, in_crm=False) # Still save client state even if order creation fails
         return None
 
-# ==== Промты и логика GPT ====
+
+def process_salesrender_order(order):
+    """
+    Processes a SalesRender order webhook. Updates client state and sends manager message.
+    Adapted from your old code, integrated with new state management.
+    """
+    try:
+        if not order.get("customer") and "id" in order:
+            print(f"⚠ customer пуст, подтягиваю из CRM по ID {order['id']}")
+            full_order = fetch_order_from_crm(order["id"])
+            if full_order:
+                order = full_order
+            else:
+                print("❌ CRM не вернул данные — пропуск")
+                return
+
+        first_name, last_name, phone = "", "", ""
+        if "customer" in order:
+            first_name = order.get("customer", {}).get("name", {}).get("firstName", "").strip()
+            last_name = order.get("customer", {}).get("name", {}).get("lastName", "").strip()
+            phone = order.get("customer", {}).get("phone", {}).get("raw", "").strip()
+        else:
+            human_fields = order.get("data", {}).get("humanNameFields", [])
+            phone_fields = order.get("data", {}).get("phoneFields", [])
+            if human_fields:
+                first_name = human_fields[0].get("value", {}).get("firstName", "").strip()
+                last_name = human_fields[0].get("value", {}).get("lastName", "").strip()
+            if phone_fields:
+                phone = phone_fields[0].get("value", {}).get("international", "").strip()
+
+        name = f"{first_name} {last_name}".strip() or "Клиент"
+
+        if not phone:
+            print("❌ Телефон отсутствует — пропуск")
+            return
+
+        # Use client_in_db_or_cache from state_manager
+        # If client is already in the system, no need to process as new lead
+        # This prevents duplicate initial processing from SalesRender if client already messaged bot.
+        if client_in_db_or_cache(phone):
+            print(f"ℹ️ Клиент {phone} уже известен, обновляем его CRM статус.")
+            save_client_state(phone, name=name, in_crm=True) # Ensure CRM status is true
+            # Optionally, you might want to send a different message to known clients
+            # For now, let's skip manager message for existing clients
+            return
+
+        # For new leads from CRM, ensure they are added to our state system
+        process_new_lead(name, phone) # This will add them to DB/cache and set in_crm=True
+
+
+        # Manager message logic (from old code)
+        now = datetime.utcnow()
+        # last_sent is still in-memory for this specific rate-limiting purpose
+        if phone in last_sent and now - last_sent[phone] < timedelta(minutes=3):
+            print(f"⚠ Повторный недозвон по {phone} — пропускаем отправку менеджеру.")
+            return
+
+        # Determine greeting (UTC+6)
+        now_kz = now + timedelta(hours=6)
+        if 5 <= now_kz.hour < 12:
+            greeting = "Қайырлы таң"
+        elif 12 <= now_kz.hour < 18:
+            greeting = "Сәлеметсіз бе"
+        else:
+            greeting = "Қайырлы кеш"
+
+        # Generate message via GPT
+        try:
+            if name and name != "Клиент":
+                prompt = (
+                    f"{greeting}! Клиенттің аты {name}. "
+                    f"Оған қоңырау шалдық, бірақ байланыс болмады. "
+                    f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
+                    f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз."
+                )
+            else:
+                prompt = (
+                    f"{greeting}! Біз клиентке қоңырау шалдық, бірақ байланыс болмады. "
+                    f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
+                    f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз. "
+                    f"Есімін қолданбаңыз."
+                )
+
+            gpt_response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7
+            )
+            message_text = gpt_response.choices[0].message.content.strip()
+        except Exception as e:
+            print(f"❌ GPT error: {e}")
+            message_text = f"{greeting}! Біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
+
+        # Send to WhatsApp
+        send_whatsapp_message(phone, message_text) # Re-using the main send_whatsapp_message
+
+        # Remember dispatch
+        last_sent[phone] = now
+        print(f"✅ Message sent to {phone}")
+
+    except Exception as e:
+        print(f"❌ Error processing order: {e}")
+
+
+# ==============================
+# GPT Prompts (kept in main app.py)
+# ==============================
 SALES_SCRIPT_PROMPT = """
 Сен — Айдос есімді Healvix көз емдеу орталығының тәжірибелі кеңесшісісің. Клиентпен жылы сөйлесіп, есімін сұрап, шын мәнінде көмектесуді мақсат тұтасың. Сен робот емессің — адам секілді, сенімді, жанашыр стилде сөйлесесің.
 
@@ -99,45 +231,37 @@ SALES_SCRIPT_PROMPT = """
 
 Сөйлесуді бағыттауға көмектесетін мына қадамдар бар, бірақ сен еркін сөйлесе аласың:
 
-1. **Сәлемдесу + танысу**  
-   «Салеметсізбе. Қалыңыз қалай? Менің атым Айдос, Healvix көз орталығының маманымын.»  
+1. **Сәлемдесу + танысу** «Салеметсізбе. Қалыңыз қалай? Менің атым Айдос, Healvix көз орталығының маманымын.»  
    «Көзіңізге қатысты проблема өзіңізде ме, әлде жақыныңызда ма?»  
    «Есіміңіз кім, жасыңыз нешеде?»
 
-2. **Белгілер мен ұзақтығын нақтылау**  
-   «Жалпы сізді не мазалап жүр? Бұлдыр көру, қызару, катаракта бар ма?»  
+2. **Белгілер мен ұзақтығын нақтылау** «Жалпы сізді не мазалап жүр? Бұлдыр көру, қызару, катаракта бар ма?»  
    «Бір көзде ме, екеуінде ме?»  
    «Қанша уақыт болды? Дәрігерге қаралдыңыз ба? Қандай ем қолдандыңыз?»
 
-3. **Эмпатия және асқыну мүмкіндігі жайлы түсіндіру**  
-   «Түсінемін, бұл көп адамда болады. Жалғыз емессіз.»  
+3. **Эмпатия және асқыну мүмкіндігі жайлы түсіндіру** «Түсінемін, бұл көп адамда болады. Жалғыз емессіз.»  
    «Көз — нәзік мүше. Дұрыс ем болмаса, лазерлік операцияға апаруы мүмкін.»  
    «Уақыт өте келе көру нашарлайды. Ерте қолға алған дұрыс.»
    
-4. **Healvix өнімін таныстыру**  
-   «Healvix — 100% табиғи өнім. Құрамында қаражидек, көкжидек, лютеин, кальций, E витамині бар.»  
+4. **Healvix өнімін таныстыру** «Healvix — 100% табиғи өнім. Құрамында қаражидек, көкжидек, лютеин, кальций, E витамині бар.»  
    «Бұл жай капля емес, көз ішіндегі қанайналымды жақсартып, тор қабықты қоректендіреді.»  
    «Нәтиже 3 аптада байқалады. Сертификат бар, 5000+ клиентке көмектесті.»
 
-5. **Бағалар мен курс ұсынысы**  
-   «3 ай – 85 000₸, 6 ай – 180 000₸, 12 ай – 300 000₸.»  
+5. **Бағалар мен курс ұсынысы** «3 ай – 85 000₸, 6 ай – 180 000₸, 12 ай – 300 000₸.»  
    «Бөліп төлеу мүмкін: 12 ай – 18 750₸, 24 ай – 9 375₸.»  
    «Қазір жеңілдік жүріп жатыр. Қара зере майы мен көзілдірік сыйлыққа берем.»
 
-6. **Күмәнмен жұмыс (қымбат, сенімсіздік, отбасы, ақша)**  
-   - Қымбат десе: «Қазір тойға 20 мың апарамыз, бірақ көзге келгенде ақша қимаймыз. Бұл – өмірлік мүше.»  
+6. **Күмәнмен жұмыс (қымбат, сенімсіздік, отбасы, ақша)** - Қымбат десе: «Қазір тойға 20 мың апарамыз, бірақ көзге келгенде ақша қимаймыз. Бұл – өмірлік мүше.»  
    - Ойлану десе: «Ойланыңыз, бірақ асқынып кетпеуі үшін бүгін шешім қабылдаған дұрыс.»  
    - Сенімсіздік: «Сертификат, отзыв, гарантия бәрі бар. Нәтиже болмаса – қайтарып береміз.»  
    - Ақша жоқ десе: «Бөліп төлеу бар. Отбасыңыздан көмек сұрап көрдіңіз бе?»  
    - Отбасымен ақылдасу: «Көз ауырса, сезетін – өзіңіз. Шешімді де өзіңіз қабылдауыңыз керек.»  
    - Қорқам десе: «Түсінем. Бірақ бұл өнім – табиғи, Аллаға тәуекел етіп көріңіз. Результат болмаса – тоқтатасыз.»
 
-7. **Дожим / Жабу**  
-   «Онда былай жасайық: мен өз атымнан жеңілдік жасап көрейін. Қазір Каспийде 5-10 мың бар ма?»  
+7. **Дожим / Жабу** «Онда былай жасайық: мен өз атымнан жеңілдік жасап көрейін. Қазір Каспийде 5-10 мың бар ма?»  
    «Егер бүгін алсаңыз, ертең доставканы жібереміз. Бір апта күтудің қажеті жоқ.»
 
-8. **Тапсырысты қорытындылау**  
-   «Сізбен нақты сөйлесіп, көмектескім келді. Емді созбайық. Қазір заказ берейік — Каспийіңізге кіріп көріңізші.»
+8. **Тапсырысты қорытындылау** «Сізбен нақты сөйлесіп, көмектескім келді. Емді созбайық. Қазір заказ берейік — Каспийіңізге кіріп көріңізші.»
 
 ---
 
@@ -182,6 +306,9 @@ SALES_SCRIPT_PROMPT = """
 - "Онда былай жасайық: мен өз атымнан жеңілдік жасап көрейін."
 - "Егер бүгін алсаңыз, ертең доставканы жібереміз. Бір апта күтудің қажеті жоқ."
 
+[Тапсырысты қорытындылау]
+- "Сізбен нақты сөйлесіп, көмектескім келді. Емді созбайық. Қазір заказ берейік — Каспийіңізге кіріп көріңізші."
+
 ---
 
 🚫 Мынандай «книжный», робот сияқты сөйлемдерден аулақ бол:
@@ -211,199 +338,192 @@ STAGE_PROMPTS = {
     "6": "Қандай да бір күмән туындаса — нақты түсіндіріп берем. Сенімсіздік, баға, отбасы мәселесі — бәріне жауап дайын. Мысалы: 'Каспийіңізде 5-10 мың бар ма? Бүгін жазсақ, ертең бастап кетесіз.' 📲💸"
 }
 
+def build_messages_for_gpt(state, user_msg):
+    """Builds messages for GPT, using the last N messages from history + current stage."""
+    prompt = SALES_SCRIPT_PROMPT + "\n\n" + STAGE_PROMPTS.get(state["stage"], "")
+    messages = [{"role": "system", "content": prompt}]
+
+    # Using MAX_HISTORY_FOR_GPT from state_manager
+    recent_history = state["history"][-MAX_HISTORY_FOR_GPT:] 
+    for item in recent_history:
+        u = item.get("user", "")
+        b = item.get("bot", "")
+        if u:
+            messages.append({"role": "user", "content": u})
+        if b:
+            messages.append({"role": "assistant", "content": b})
+
+    messages.append({"role": "user", "content": user_msg})
+    return messages
+
+
 def split_message(text, max_length=1000):
+    """Splits long texts by sentences or newlines for WhatsApp."""
     parts = []
+    text = text.strip()
     while len(text) > max_length:
-        split_index = text[:max_length].rfind(". ")
-        if split_index == -1:
+        # Try to find a good split point (newline or sentence end)
+        split_index = max(text[:max_length].rfind("\n"), text[:max_length].rfind(". "))
+        if split_index == -1 or split_index < max_length * 0.5:
             split_index = max_length
-        parts.append(text[:split_index+1].strip())
-        text = text[split_index+1:].strip()
+        parts.append(text[:split_index].strip())
+        text = text[split_index:].lstrip()
     if text:
         parts.append(text)
     return parts
 
+
 def send_whatsapp_message(phone, message):
-    payload = {"messaging_product": "whatsapp","to": phone,"type": "text","text":{"body": message}}
-    response = requests.post(WHATSAPP_API_URL, headers=HEADERS, json=payload)
-    print(f"📤 Ответ от сервера: {response.status_code} {response.text}")
-    update_last_message_time(phone)
-    return response
-
-def get_gpt_response(user_msg, user_phone):
+    """Sends a message to WhatsApp via 360dialog API."""
+    payload = {"messaging_product": "whatsapp", "to": phone, "type": "text", "text": {"body": message}}
     try:
-        user_data = USER_STATE.get(user_phone, {})
-        history = user_data.get("history", [])
-        stage = user_data.get("stage", "0")
-
-        prompt = SALES_SCRIPT_PROMPT + "\n\n" + STAGE_PROMPTS.get(stage, "")
-        messages = [{"role": "system", "content": prompt}]
-        for item in history:
-            messages.append({"role": "user", "content": item["user"]})
-            messages.append({"role": "assistant", "content": item["bot"]})
-        messages.append({"role": "user", "content": user_msg})
-
-        response = client.chat.completions.create(model="gpt-4o", messages=messages, temperature=0.7)
-        reply = response.choices[0].message.content.strip()
-        next_stage = str(int(stage)+1) if int(stage)<6 else "6"
-
-        USER_STATE[user_phone] = {
-            "history": history + [{"user": user_msg, "bot": reply}],
-            "last_message": user_msg,
-            "stage": next_stage,
-            "last_time": time.time(),
-            "followed_up": False
-        }
-        return reply
+        response = requests.post(WHATSAPP_API_URL, headers=HEADERS, json=payload, timeout=15)
+        # Update client's last_time if message was sent successfully
+        # save_client_state(phone, last_time=time.time()) # This is handled in get_gpt_response or follow_up_checker
+        print(f"📤 WhatsApp response: {getattr(response, 'status_code', 'no_response')}")
+        return response
     except Exception as e:
-        print(f"❌ GPT қатесі: {e}")
+        print(f"❌ WhatsApp request error: {e}")
+        return None
+
+
+def get_gpt_response(user_msg, phone):
+    """Gets a response from GPT and updates client state."""
+    state = get_client_state(phone) # Use the new state manager function
+    messages = build_messages_for_gpt(state, user_msg)
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=messages,
+            temperature=0.7
+        )
+        reply = response.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"❌ GPT error: {e}")
         return "Кешіріңіз, қазір жауап бере алмаймын."
 
-# ==== Follow-up ====
-FOLLOW_UP_DELAY = 60
-FOLLOW_UP_MESSAGE = "Сізден жауап болмай жатыр 🤔 Сұрақтарыңыз болса, жауап беруге дайынмын."
+    # Determine next stage (capped at 6)
+    try:
+        next_stage_int = min(6, max(0, int(state["stage"])) + 1)
+    except Exception:
+        next_stage_int = 0
+    next_stage = str(next_stage_int)
 
-def follow_up_checker():
-    while True:
-        now = time.time()
-        for phone, state in list(USER_STATE.items()):
-            last_time = state.get("last_time")
-            if last_time and now - last_time > FOLLOW_UP_DELAY and not state.get("followed_up"):
-                print(f"[🔔] Отправка follow-up клиенту {phone}")
-                send_whatsapp_message(phone, "📌 Айдос: " + FOLLOW_UP_MESSAGE)
-                USER_STATE[phone]["followed_up"] = True
-        time.sleep(30)
+    # Update history and state using the new state manager function
+    new_history = list(state["history"]) + [{"user": user_msg, "bot": reply}]
+    save_client_state(
+        phone,
+        stage=next_stage,
+        history=new_history,
+        last_time=time.time(), # Update last_time
+        followed_up=False      # Reset follow_up flag as we just responded
+    )
+    return reply
 
-def start_followup_thread():
-    if not hasattr(app, 'followup_started'):
-        app.followup_started = True
-        thread = threading.Thread(target=follow_up_checker, daemon=True)
-        thread.start()
-        print("🟢 follow-up checker запущен")
 
-start_followup_thread()
-
-# ==== Webhook WhatsApp ====
+# ==============================
+# Flask Routes
+# ==============================
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    data = request.get_json()
-    print("📩 Келген JSON:", data)
+    data = request.get_json(silent=True) or {}
+    print("📩 Incoming JSON:", data)
 
     try:
-        messages = data["entry"][0]["changes"][0]["value"].get("messages")
-        contacts = data["entry"][0]["changes"][0]["value"].get("contacts", [])
+        entry = (data.get("entry") or [{}])[0]
+        changes = (entry.get("changes") or [{}])[0]
+        value = changes.get("value") or {}
+        messages = value.get("messages")
+        contacts = value.get("contacts", [])
 
         if not messages:
             return jsonify({"status": "no_message"}), 200
 
         msg = messages[0]
         msg_id = msg["id"]
+
+        # Deduplication check using in-memory set (resets on restart)
         if msg_id in PROCESSED_MESSAGES:
-            print(f"⏩ Сообщение {msg_id} уже обработано — пропускаем")
+            print(f"⏩ Message {msg_id} already processed — skipping")
             return jsonify({"status": "duplicate"}), 200
         PROCESSED_MESSAGES.add(msg_id)
 
-        user_phone = msg["from"]
-        user_msg = msg["text"]["body"]
+        user_phone = msg.get("from")
+        # Support only text messages; quietly ignore other types
+        user_msg = (msg.get("text") or {}).get("body", "")
+        if not (user_phone and isinstance(user_msg, str) and user_msg.strip()):
+            return jsonify({"status": "ignored"}), 200
 
-        if not USER_STATE.get(user_phone):
-            full_name = contacts[0]["profile"].get("name", "Клиент") if contacts else "Клиент"
-            order_id = process_new_lead(full_name, user_phone)
-            USER_STATE[user_phone] = {"in_crm": client_in_db(user_phone)}
+        # Initialize lead if seen for the first time (uses new state manager)
+        if not client_in_db_or_cache(user_phone):
+            name = "Клиент"
+            if contacts and isinstance(contacts, list):
+                profile = (contacts[0] or {}).get("profile") or {}
+                name = profile.get("name", "Клиент")
+            
+            # This will create client state in DB/cache and handle CRM check
+            process_new_lead(name, user_phone) 
+            print(f"ℹ️ New client {user_phone} initialized with name {name}")
 
-        reply = get_gpt_response(user_msg, user_phone)
+        # Continue with bot logic
+        reply = get_gpt_response(user_msg.strip(), user_phone)
+
+        # Split and send WhatsApp message parts
         for part in split_message(reply):
             send_whatsapp_message(user_phone, part)
 
         return jsonify({"status": "ok"}), 200
-
     except Exception as e:
-        print(f"❌ Ошибка в webhook: {e}")
+        print(f"❌ Webhook error: {e}")
         return jsonify({"status": "error"}), 500
 
-# ==== SalesRender webhook ====
-SALESRENDER_URL = "https://de.backend.salesrender.com/companies/1123/CRM"
-SALESRENDER_TOKEN = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXNyZW5kZXIuY29tLyIsImF1ZCI6IkNSTSIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc"
-
-def fetch_order_from_crm(order_id):
-    headers = {"Content-Type": "application/json","Authorization": SALESRENDER_TOKEN}
-    query = {"query": f"""query {{ordersFetcher(filters: {{ include: {{ ids: ["{order_id}"] }} }}) {{ orders {{ id data {{ humanNameFields {{ value {{ firstName lastName }} }} phoneFields {{ value {{ international raw national }} }} }} }} }} }}"""}
-    try:
-        response = requests.post(SALESRENDER_URL, headers=headers, json=query, timeout=10)
-        response.raise_for_status()
-        data = response.json().get("data", {}).get("ordersFetcher", {}).get("orders", [])
-        return data[0] if data else None
-    except Exception as e:
-        print(f"❌ Ошибка запроса в CRM API: {e}")
-        return None
-
-def process_salesrender_order(order):
-    try:
-        if not order.get("customer") and "id" in order:
-            print(f"⚠ customer пуст, подтягиваю из CRM по ID {order['id']}")
-            full_order = fetch_order_from_crm(order["id"])
-            if full_order:
-                order = full_order
-            else:
-                print("❌ CRM не вернул данные — пропуск")
-                return
-
-        first_name, last_name, phone = "", "", ""
-        if "customer" in order:
-            first_name = order.get("customer", {}).get("name", {}).get("firstName", "").strip()
-            last_name = order.get("customer", {}).get("name", {}).get("lastName", "").strip()
-            phone = order.get("customer", {}).get("phone", {}).get("raw", "").strip()
-        else:
-            human_fields = order.get("data", {}).get("humanNameFields", [])
-            phone_fields = order.get("data", {}).get("phoneFields", [])
-            if human_fields: first_name = human_fields[0].get("value", {}).get("firstName", "").strip()
-            if human_fields: last_name = human_fields[0].get("value", {}).get("lastName", "").strip()
-            if phone_fields: phone = phone_fields[0].get("value", {}).get("international", "").strip()
-
-        name = f"{first_name} {last_name}".strip()
-        if not phone:
-            print("❌ Телефон отсутствует — пропуск")
-            return
-
-        now = datetime.utcnow()
-        if phone in last_sent and now - last_sent[phone] < timedelta(minutes=3):
-            print(f"⚠ Повторный недозвон по {phone} — пропускаем")
-            return
-
-        now_kz = now + timedelta(hours=6)
-        greeting = "Қайырлы таң" if 5 <= now_kz.hour < 12 else "Сәлеметсіз бе" if 12 <= now_kz.hour < 18 else "Қайырлы кеш"
-
-        prompt = f"{greeting}! Клиенттің аты {name}. Оған қоңырау шалдық, бірақ байланыс болмады. Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. Хабарламаны Айдос атынан Healvix орталығынан жазыңыз." if name else f"{greeting}! Біз клиентке қоңырау шалдық, бірақ байланыс болмады. WhatsApp-та қысқа, жылы хабарлама жазыңыз. Есімін қолданбаңыз."
-
-        gpt_response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}], temperature=0.7)
-        message_text = gpt_response.choices[0].message.content.strip()
-
-        send_whatsapp_message(phone, message_text)
-        last_sent[phone] = now
-        print(f"✅ Сообщение отправлено на {phone}")
-
-    except Exception as e:
-        print(f"❌ Ошибка обработки заказа: {e}")
 
 @app.route('/salesrender-hook', methods=['POST'])
 def salesrender_hook():
-    print("=== Входящий запрос в /salesrender-hook ===")
+    print("=== Incoming request to /salesrender-hook ===")
     try:
-        data = request.get_json()
-        print("Payload:", data)
-        orders = data.get("data", {}).get("orders") or data.get("orders") or [data]
-        if not orders or not isinstance(orders, list):
-            return jsonify({"error": "Нет заказов"}), 400
+        data = request.get_json(silent=True) or {}
+        print("Payload:", json.dumps(data, indent=2, ensure_ascii=False)) # Use json.dumps for pretty print
 
-        threading.Thread(target=process_salesrender_order, args=(orders[0],), daemon=True).start()
+        # Handle various SalesRender webhook formats
+        orders = (
+            data.get("data", {}).get("orders")
+            or data.get("orders")
+            or [data] # Fallback if it's a single order object directly
+        )
+
+        if not orders or not isinstance(orders, list):
+            return jsonify({"error": "No orders found or invalid format"}), 400
+
+        # Process the first order (or loop if needed for multiple orders) in a separate thread
+        threading.Thread(
+            target=process_salesrender_order,
+            args=(orders[0],),
+            daemon=True
+        ).start()
+
         return jsonify({"status": "accepted"}), 200
     except Exception as e:
-        print(f"❌ Ошибка парсинга вебхука: {e}")
+        print(f"❌ Webhook parsing error: {e}")
         return jsonify({"error": str(e)}), 500
+
 
 @app.route('/', methods=['GET'])
 def home():
     return "Healvix бот іске қосылды!", 200
 
+# ==============================
+# Application Startup
+# ==============================
 if __name__ == "__main__":
+    init_db() # Initialize the database
+    load_cache_from_db() # Load all existing clients into cache
+
+    # Start background threads for follow-up and cleanup
+    # Pass send_whatsapp_message function as an argument to follow_up_checker
+    threading.Thread(target=follow_up_checker, args=(send_whatsapp_message,), daemon=True).start()
+    threading.Thread(target=cleanup_old_clients, daemon=True).start()
+    
+    print("Starting Flask app...")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
