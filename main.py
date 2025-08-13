@@ -248,7 +248,7 @@ def get_gpt_response(user_msg, user_phone):
         next_stage = str(int(stage)+1) if int(stage)<6 else "6"
 
         USER_STATE[user_phone] = {
-            "history": history[-5:] + [{"user": user_msg, "bot": reply}],
+            "history": history + [{"user": user_msg, "bot": reply}],
             "last_message": user_msg,
             "stage": next_stage,
             "last_time": time.time(),
