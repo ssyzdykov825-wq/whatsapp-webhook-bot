@@ -14,10 +14,10 @@ D360_API_KEY    = os.environ.get("D360_API_KEY")       # ключ 360dialog
 OPENAI_API_KEY  = os.environ.get("OPENAI_API_KEY")     # ключ OpenAI
 
 # 360dialog endpoint
-WHATSAPP_API_URL = "https://waba-v2.360dialog.io/messages"
+D360_API_KEY = os.environ.get("WHATSAPP_API_KEY")
 HEADERS_360 = {
     "Content-Type": "application/json",
-    "D360-API-KEY": D360_API_KEY or ""
+    "D360-API-KEY": D360_API_KEY
 }
 
 # ================== APP / GPT ==================
