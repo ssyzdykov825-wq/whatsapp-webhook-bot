@@ -60,18 +60,18 @@ def init_db():
     """)
     # приведение in_crm к BOOLEAN, если наследие из прошлых миграций
     db_exec("""
-        DO $$
-        BEGIN
-            IF EXISTS (
-                SELECT 1
-                FROM information_schema.columns
-                WHERE table_name='user_state' AND column_name='in_crm' AND data_type<>'boolean'
-            ) THEN
-                ALTER TABLE user_state
-                ALTER COLUMN in_crm TYPE BOOLEAN USING (in_crm::boolean);
-            END IF;
-        END $$;
-    """)
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name='user_state' AND column_name='followed_up' AND data_type<>'boolean'
+    ) THEN
+        ALTER TABLE user_state
+        ALTER COLUMN followed_up TYPE BOOLEAN USING (followed_up::boolean);
+    END IF;
+END $$;
+
 
 init_db()
 
