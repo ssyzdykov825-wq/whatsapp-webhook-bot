@@ -281,28 +281,35 @@ def webhook():
         user_msg = msg["text"]["body"]
         full_name = contacts[0]["profile"].get("name", "Клиент") if contacts else "Клиент"
 
-        # нормализуем номер (только цифры)
-        norm_phone = "".join(filter(str.isdigit, user_phone))
-        
-        # проверяем текущее состояние пользователя
+        # нормализуем телефон, если нужно
+        norm_phone = user_phone.strip()
+
+        # ================== Проверяем состояние пользователя ==================
         user_state = get_user_state(norm_phone)
         if not user_state:
-            # новый клиент
+            # новый клиент — создаём заказ в CRM и стартовую запись
             order_id = process_new_lead(full_name, norm_phone)
             if order_id:
                 print(f"✅ Новый заказ {order_id} создан ({full_name}, {norm_phone})")
             else:
                 print(f"ℹ️ Клиент {norm_phone} уже есть в CRM или заказ не создан")
-            # создаём стартовую запись, но stage = "0" только для нового
-            set_user_state(norm_phone, stage="0", history=[], last_message=None, last_time=None, followed_up=False, in_crm=True)
+            set_user_state(
+                norm_phone,
+                stage="0",
+                history=[],
+                last_message=None,
+                last_time=None,
+                followed_up=False,
+                in_crm=True
+            )
         else:
-            # уже есть состояние — используем существующий stage и историю
-            print(f"ℹ️ Клиент {norm_phone} уже в базе, stage={user_state['stage']}")
+            # клиент уже в базе — используем существующую историю
+            print(f"ℹ️ Клиент {norm_phone} уже в базе, stage={user_state['stage']}, history длина={len(user_state['history'])}")
 
-        # GPT ответ с учётом истории
+        # ================== GPT ответ с учётом истории ==================
         reply = get_gpt_response(user_msg, norm_phone)
 
-        # отправляем в WhatsApp (режем на части при необходимости)
+        # ================== Отправка в WhatsApp ==================
         for part in split_message(reply):
             send_whatsapp_360(norm_phone, part)
 
