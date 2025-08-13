@@ -380,17 +380,17 @@ def set_user_state(phone, stage, history, last_message, last_time, followed_up, 
     c.execute("SELECT phone FROM user_state WHERE phone=%s;", (phone,))
     exists = c.fetchone()
     history_json = json.dumps(history)  # Преобразуем список в строку
-    if exists:
-        c.execute("""
-            UPDATE user_state 
-            SET stage=%s, history=%s, last_message=%s, last_time=%s, followed_up=%s, in_crm=%s
-            WHERE phone=%s
-        """, (stage, history_json, last_message, last_time, int(followed_up), int(in_crm), phone))
-    else:
-        c.execute("""
-            INSERT INTO user_state (phone, stage, history, last_message, last_time, followed_up, in_crm)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (phone, stage, history_json, last_message, last_time, int(followed_up), int(in_crm)))
+if exists:
+    c.execute("""
+        UPDATE user_state 
+        SET stage=%s, history=%s, last_message=%s, last_time=%s, followed_up=%s, in_crm=%s
+        WHERE phone=%s
+    """, (stage, history_json, last_message, last_time, bool(followed_up), bool(in_crm), phone))
+else:
+    c.execute("""
+        INSERT INTO user_state (phone, stage, history, last_message, last_time, followed_up, in_crm)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+    """, (phone, stage, history_json, last_message, last_time, bool(followed_up), bool(in_crm)))
     conn.commit()
     conn.close()
 
