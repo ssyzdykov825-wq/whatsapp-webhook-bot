@@ -194,6 +194,7 @@ STAGE_PROMPTS = {
 }
 
 def get_gpt_response(user_msg: str, user_phone: str) -> str:
+    # получаем текущее состояние пользователя
     user_data = get_user_state(user_phone) or {
         "history": [],
         "stage": "0",
@@ -206,30 +207,33 @@ def get_gpt_response(user_msg: str, user_phone: str) -> str:
     history = user_data["history"]
     stage = user_data["stage"]
 
+    # формируем системный prompt с учетом текущего stage
     prompt = SALES_SCRIPT_PROMPT + "\n\n" + STAGE_PROMPTS.get(stage, "")
 
+    # собираем историю в виде сообщений для GPT
     messages = [{"role": "system", "content": prompt}]
-    for item in history[-5:]:
+    for item in history[-20:]:  # учитываем максимум 20 последних сообщений
         if "user" in item:
             messages.append({"role": "user", "content": item["user"]})
         if "bot" in item:
             messages.append({"role": "assistant", "content": item["bot"]})
     messages.append({"role": "user", "content": user_msg})
 
+    # запрос к GPT
     resp = client.chat.completions.create(
-        model="gpt-4o",           # можно заменить на gpt-4o-mini для экономии
+        model="gpt-4o",  # можно gpt-4o-mini
         messages=messages,
         temperature=0.7
     )
     reply = resp.choices[0].message.content.strip()
 
-    # следующий stage (не выше 6)
+    # вычисляем следующий stage (не выше 6)
     try:
         next_stage = str(min(int(stage) + 1, 6))
     except Exception:
         next_stage = "1"
 
-    # сохраняем память (до 20 последних пар)
+    # сохраняем память (до 20 последних пар user-bot)
     new_history = (history + [{"user": user_msg, "bot": reply}])[-20:]
     set_user_state(
         phone=user_phone,
@@ -240,8 +244,9 @@ def get_gpt_response(user_msg: str, user_phone: str) -> str:
         followed_up=False,
         in_crm=user_data.get("in_crm", False)
     )
-    return reply
 
+    return reply
+    
 # ================== Webhook (360dialog формат входящих) ==================
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -281,18 +286,19 @@ def webhook():
         user_msg = msg["text"]["body"]
         full_name = contacts[0]["profile"].get("name", "Клиент") if contacts else "Клиент"
 
-        # нормализуем телефон, если нужно
-        norm_phone = user_phone.strip()
+        # нормализуем номер
+        norm_phone = user_phone.replace("+", "").replace(" ", "").replace("-", "")
 
-        # ================== Проверяем состояние пользователя ==================
+        # проверяем текущее состояние пользователя
         user_state = get_user_state(norm_phone)
         if not user_state:
-            # новый клиент — создаём заказ в CRM и стартовую запись
+            # новый клиент — создаём заказ в CRM
             order_id = process_new_lead(full_name, norm_phone)
             if order_id:
                 print(f"✅ Новый заказ {order_id} создан ({full_name}, {norm_phone})")
             else:
                 print(f"ℹ️ Клиент {norm_phone} уже есть в CRM или заказ не создан")
+            # создаём стартовую запись только один раз
             set_user_state(
                 norm_phone,
                 stage="0",
@@ -303,13 +309,12 @@ def webhook():
                 in_crm=True
             )
         else:
-            # клиент уже в базе — используем существующую историю
-            print(f"ℹ️ Клиент {norm_phone} уже в базе, stage={user_state['stage']}, history длина={len(user_state['history'])}")
+            print(f"ℹ️ Клиент {norm_phone} уже в базе, stage={user_state['stage']}, история длина={len(user_state['history'])}")
 
-        # ================== GPT ответ с учётом истории ==================
+        # GPT ответ с учётом истории
         reply = get_gpt_response(user_msg, norm_phone)
 
-        # ================== Отправка в WhatsApp ==================
+        # отправляем в WhatsApp (режем на части при необходимости)
         for part in split_message(reply):
             send_whatsapp_360(norm_phone, part)
 
