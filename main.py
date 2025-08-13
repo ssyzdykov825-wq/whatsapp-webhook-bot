@@ -86,6 +86,7 @@ BEGIN
         ALTER TABLE user_state ALTER COLUMN in_crm SET DEFAULT FALSE;
     END IF;
 END $$;
+""")  # <-- закрываем тройные кавычки для db_exec
 
 init_db()
 
