@@ -46,6 +46,7 @@ def init_db():
             id TEXT PRIMARY KEY
         );
     """)
+
     # таблица состояния пользователя
     db_exec("""
         CREATE TABLE IF NOT EXISTS user_state (
@@ -58,20 +59,33 @@ def init_db():
             in_crm       BOOLEAN DEFAULT FALSE
         );
     """)
-    # приведение in_crm к BOOLEAN, если наследие из прошлых миграций
+
+    # исправляем типы BOOLEAN для старых колонок
     db_exec("""
 DO $$
 BEGIN
+    -- followed_up
     IF EXISTS (
         SELECT 1
         FROM information_schema.columns
         WHERE table_name='user_state' AND column_name='followed_up' AND data_type<>'boolean'
     ) THEN
-        ALTER TABLE user_state
-        ALTER COLUMN followed_up TYPE BOOLEAN USING (followed_up::boolean);
+        ALTER TABLE user_state ALTER COLUMN followed_up DROP DEFAULT;
+        ALTER TABLE user_state ALTER COLUMN followed_up TYPE BOOLEAN USING (followed_up::boolean);
+        ALTER TABLE user_state ALTER COLUMN followed_up SET DEFAULT FALSE;
+    END IF;
+
+    -- in_crm
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name='user_state' AND column_name='in_crm' AND data_type<>'boolean'
+    ) THEN
+        ALTER TABLE user_state ALTER COLUMN in_crm DROP DEFAULT;
+        ALTER TABLE user_state ALTER COLUMN in_crm TYPE BOOLEAN USING (in_crm::boolean);
+        ALTER TABLE user_state ALTER COLUMN in_crm SET DEFAULT FALSE;
     END IF;
 END $$;
-""")
 
 init_db()
 
