@@ -117,36 +117,40 @@ $$;
 
 conn.commit()
 
-def add_processed_message(msg_id):
-    cur.execute("INSERT INTO processed_messages (id) VALUES (%s) ON CONFLICT DO NOTHING;", (msg_id,))
-    conn.commit()
-
 def set_user_state(phone, stage, history, last_message, last_time, followed_up, in_crm=False):
     conn = psycopg2.connect(DATABASE_URL)
     c = conn.cursor()
-    c.execute("SELECT phone FROM user_state WHERE phone=?", (phone,))
+    c.execute("SELECT phone FROM user_state WHERE phone=%s", (phone,))
     exists = c.fetchone()
     history_json = json.dumps(history)
+    
     if exists:
         c.execute("""
             UPDATE user_state 
             SET stage=%s, history=%s, last_message=%s, last_time=%s, followed_up=%s, in_crm=%s
             WHERE phone=%s
-        """, (stage, history_json, last_message, last_time, int(followed_up), bool(in_crm), phone))
+        """, (stage, history_json, last_message, last_time, bool(followed_up), bool(in_crm), phone))
     else:
         c.execute("""
             INSERT INTO user_state (phone, stage, history, last_message, last_time, followed_up, in_crm)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (phone, stage, history_json, last_message, last_time, int(followed_up), bool(in_crm)))
+        """, (phone, stage, history_json, last_message, last_time, bool(followed_up), bool(in_crm)))
+    
     conn.commit()
     conn.close()
+
 
 def get_user_state(phone):
     conn = psycopg2.connect(DATABASE_URL)
     c = conn.cursor()
-    c.execute("SELECT stage, history, last_message, last_time, followed_up, in_crm FROM user_state WHERE phone=?", (phone,))
+    c.execute("""
+        SELECT stage, history, last_message, last_time, followed_up, in_crm 
+        FROM user_state 
+        WHERE phone=%s
+    """, (phone,))
     row = c.fetchone()
     conn.close()
+    
     if row:
         return {
             "stage": row[0],
@@ -154,7 +158,7 @@ def get_user_state(phone):
             "last_message": row[2],
             "last_time": row[3],
             "followed_up": bool(row[4]),
-            "in_crm": bool(row[5])  # поле in_crm
+            "in_crm": bool(row[5])
         }
     return None
 
