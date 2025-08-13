@@ -260,6 +260,7 @@ def webhook():
         change = entry.get("changes", [])[0]
         value = change.get("value", {})
 
+        # пропускаем статусы (sent/delivered/read)
         if value.get("statuses") and not value.get("messages"):
             return jsonify({"status": "status_event"}), 200
 
@@ -272,11 +273,13 @@ def webhook():
         msg = messages[0]
         msg_id = msg["id"]
 
+        # проверка на дубль
         if is_message_processed(msg_id):
             print(f"⏩ Сообщение {msg_id} уже обработано — пропускаем")
             return jsonify({"status": "duplicate"}), 200
         add_processed_message(msg_id)
 
+        # поддерживаем только текст
         if msg.get("type") != "text":
             print("⚠️ Неподдерживаемый тип:", msg.get("type"))
             return jsonify({"status": "unsupported_type"}), 200
@@ -285,10 +288,10 @@ def webhook():
         user_msg = msg["text"]["body"]
         full_name = contacts[0]["profile"].get("name", "Клиент") if contacts else "Клиент"
 
-        # нормализуем номер
+        # нормализуем номер (для единообразия)
         norm_phone = user_phone.replace("+", "").replace(" ", "").replace("-", "")
 
-        # проверяем текущее состояние пользователя
+        # получаем текущее состояние пользователя
         user_state = get_user_state(norm_phone)
         if not user_state:
             # новый клиент — создаём заказ в CRM
@@ -297,6 +300,7 @@ def webhook():
                 print(f"✅ Новый заказ {order_id} создан ({full_name}, {norm_phone})")
             else:
                 print(f"ℹ️ Клиент {norm_phone} уже есть в CRM или заказ не создан")
+            # стартовое состояние, history пустая
             set_user_state(
                 norm_phone,
                 stage="0",
@@ -307,12 +311,13 @@ def webhook():
                 in_crm=True
             )
         else:
+            # уже есть состояние — используем существующую stage и историю
             print(f"ℹ️ Клиент {norm_phone} уже в базе, stage={user_state['stage']}, история длина={len(user_state['history'])}")
 
-        # GPT ответ с учётом истории
+        # получаем ответ GPT с учётом истории
         reply = get_gpt_response(user_msg, norm_phone)
 
-        # отправляем в WhatsApp (разбиваем на части при необходимости)
+        # отправка в WhatsApp (если длинное, режем на части)
         for part in split_message(reply):
             send_whatsapp_360(norm_phone, part)
 
