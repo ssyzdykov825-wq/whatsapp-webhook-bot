@@ -193,15 +193,8 @@ STAGE_PROMPTS = {
     "6": "Диалог завершён, вежливо отвечай коротко."
 }
 
+RESET_STAGE_SECONDS = 30 * 60  # 30 минут бездействия — новый диалог
 GREETING_KEYWORDS = ["привет", "здравствуй", "hi", "hello", "сәлем", "salem"]
-
-def is_meaningful_message(msg: str) -> bool:
-    msg_clean = msg.strip().lower()
-    if len(msg_clean) <= 2:
-        return False
-    if msg_clean in GREETING_KEYWORDS:
-        return False
-    return True
 
 def get_gpt_response(user_msg: str, user_phone: str) -> str:
     # получаем текущее состояние пользователя
@@ -215,15 +208,22 @@ def get_gpt_response(user_msg: str, user_phone: str) -> str:
     }
 
     history = user_data["history"]
-    stage = user_data["stage"]
+    stage = user_data.get("stage", "0")
     last_msg = user_data.get("last_message")
+    last_time = user_data.get("last_time", 0)
+    now = time.time()
 
-    # формируем системный prompt с учетом текущего stage
+    # «умный» сброс stage, если прошло слишком много времени
+    if now - last_time > RESET_STAGE_SECONDS:
+        print(f"⏳ Больше {RESET_STAGE_SECONDS//60} минут прошло — сброс stage в 0")
+        stage = "0"
+
+    # составляем системный prompt с учетом текущего stage
     prompt = SALES_SCRIPT_PROMPT + "\n\n" + STAGE_PROMPTS.get(stage, "")
 
-    # собираем историю для GPT
+    # собираем историю последних 20 сообщений
     messages = [{"role": "system", "content": prompt}]
-    for item in history[-20:]:  # учитываем максимум 20 последних сообщений
+    for item in history[-20:]:
         if "user" in item:
             messages.append({"role": "user", "content": item["user"]})
         if "bot" in item:
@@ -232,28 +232,29 @@ def get_gpt_response(user_msg: str, user_phone: str) -> str:
 
     # запрос к GPT
     resp = client.chat.completions.create(
-        model="gpt-4o",  # или gpt-4o-mini
+        model="gpt-4o",
         messages=messages,
         temperature=0.7
     )
     reply = resp.choices[0].message.content.strip()
 
-    # "умная" логика перехода stage
+    # логика перехода stage
     next_stage = stage
-    if is_meaningful_message(user_msg) and user_msg != last_msg:
+    # если сообщение нового содержания и не слишком короткое — продвигаем stage
+    if user_msg.strip() and user_msg.strip() != last_msg and len(user_msg.strip()) > 2:
         try:
             next_stage = str(min(int(stage) + 1, 6))
         except Exception:
             next_stage = stage
 
-    # сохраняем память (до 20 последних пар user-bot)
+    # сохраняем историю и состояние
     new_history = (history + [{"user": user_msg, "bot": reply}])[-20:]
     set_user_state(
         phone=user_phone,
         stage=next_stage,
         history=new_history,
         last_message=user_msg,
-        last_time=time.time(),
+        last_time=now,
         followed_up=False,
         in_crm=user_data.get("in_crm", False)
     )
@@ -261,6 +262,7 @@ def get_gpt_response(user_msg: str, user_phone: str) -> str:
     return reply
     
 # ================== Webhook (360dialog формат входящих) ==================
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
@@ -271,7 +273,7 @@ def webhook():
         change = entry.get("changes", [])[0]
         value = change.get("value", {})
 
-        # статусы доставок (sent/delivered/read) — пропускаем
+        # статусы доставок — пропускаем
         if value.get("statuses") and not value.get("messages"):
             return jsonify({"status": "status_event"}), 200
 
@@ -284,34 +286,22 @@ def webhook():
         msg = messages[0]
         msg_id = msg["id"]
 
-        # дубль?
         if is_message_processed(msg_id):
-            print(f"⏩ Сообщение {msg_id} уже обработано — пропускаем")
             return jsonify({"status": "duplicate"}), 200
         add_processed_message(msg_id)
 
-        # поддерживаем только текст
         if msg.get("type") != "text":
-            print("⚠️ Неподдерживаемый тип:", msg.get("type"))
             return jsonify({"status": "unsupported_type"}), 200
 
         user_phone = msg["from"]
         user_msg = msg["text"]["body"]
         full_name = contacts[0]["profile"].get("name", "Клиент") if contacts else "Клиент"
-
-        # нормализуем номер
         norm_phone = user_phone.replace("+", "").replace(" ", "").replace("-", "")
 
-        # получаем текущее состояние пользователя
+        # проверяем состояние пользователя
         user_state = get_user_state(norm_phone)
         if not user_state:
-            # новый клиент — создаём заказ в CRM
             order_id = process_new_lead(full_name, norm_phone)
-            if order_id:
-                print(f"✅ Новый заказ {order_id} создан ({full_name}, {norm_phone})")
-            else:
-                print(f"ℹ️ Клиент {norm_phone} уже есть в CRM или заказ не создан")
-            # создаём стартовую запись только один раз
             set_user_state(
                 norm_phone,
                 stage="0",
@@ -321,13 +311,11 @@ def webhook():
                 followed_up=False,
                 in_crm=True
             )
-        else:
-            print(f"ℹ️ Клиент {norm_phone} уже в базе, stage={user_state['stage']}, история длина={len(user_state['history'])}")
 
-        # GPT ответ с учётом истории и умной логики stage
+        # получаем ответ GPT с учётом истории
         reply = get_gpt_response(user_msg, norm_phone)
 
-        # отправляем в WhatsApp (режем на части при необходимости)
+        # отправка в WhatsApp
         for part in split_message(reply):
             send_whatsapp_360(norm_phone, part)
 
