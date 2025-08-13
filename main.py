@@ -193,11 +193,9 @@ STAGE_PROMPTS = {
     "6": "Диалог завершён, вежливо отвечай коротко."
 }
 
-RESET_STAGE_SECONDS = 30 * 60  # 30 минут бездействия — новый диалог
 GREETING_KEYWORDS = ["привет", "здравствуй", "hi", "hello", "сәлем", "salem"]
 
 def get_gpt_response(user_msg: str, user_phone: str) -> str:
-    # получаем текущее состояние пользователя
     user_data = get_user_state(user_phone) or {
         "history": [],
         "stage": "0",
@@ -208,20 +206,13 @@ def get_gpt_response(user_msg: str, user_phone: str) -> str:
     }
 
     history = user_data["history"]
-    stage = user_data.get("stage", "0")
-    last_msg = user_data.get("last_message")
-    last_time = user_data.get("last_time", 0)
-    now = time.time()
+    stage = user_data["stage"]
+    last_msg = user_data.get("last_message", "")
 
-    # «умный» сброс stage, если прошло слишком много времени
-    if now - last_time > RESET_STAGE_SECONDS:
-        print(f"⏳ Больше {RESET_STAGE_SECONDS//60} минут прошло — сброс stage в 0")
-        stage = "0"
-
-    # составляем системный prompt с учетом текущего stage
+    # формируем системный prompt с учетом текущего stage
     prompt = SALES_SCRIPT_PROMPT + "\n\n" + STAGE_PROMPTS.get(stage, "")
 
-    # собираем историю последних 20 сообщений
+    # собираем историю в виде сообщений для GPT
     messages = [{"role": "system", "content": prompt}]
     for item in history[-20:]:
         if "user" in item:
@@ -238,23 +229,26 @@ def get_gpt_response(user_msg: str, user_phone: str) -> str:
     )
     reply = resp.choices[0].message.content.strip()
 
-    # логика перехода stage
+    # =========== «умная» логика stage ===========
+    # Не сбрасываем stage при коротких приветствиях
+    user_msg_clean = user_msg.strip().lower()
+    is_greeting = any(word in user_msg_clean for word in GREETING_KEYWORDS)
+
     next_stage = stage
-    # если сообщение нового содержания и не слишком короткое — продвигаем stage
-    if user_msg.strip() and user_msg.strip() != last_msg and len(user_msg.strip()) > 2:
+    if not is_greeting and user_msg != last_msg and len(user_msg.strip()) > 2:
         try:
             next_stage = str(min(int(stage) + 1, 6))
         except Exception:
             next_stage = stage
 
-    # сохраняем историю и состояние
+    # сохраняем память (до 20 последних пар user-bot)
     new_history = (history + [{"user": user_msg, "bot": reply}])[-20:]
     set_user_state(
         phone=user_phone,
         stage=next_stage,
         history=new_history,
         last_message=user_msg,
-        last_time=now,
+        last_time=time.time(),
         followed_up=False,
         in_crm=user_data.get("in_crm", False)
     )
