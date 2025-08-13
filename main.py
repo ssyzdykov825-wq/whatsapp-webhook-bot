@@ -8,185 +8,82 @@ from flask import Flask, request, jsonify
 from openai import OpenAI
 from salesrender_api import create_order, client_exists
 
+# ====== Настройки ======
+DB_FILE = "bot_data.db"
+CRM_API_URL = "https://de.backend.salesrender.com/companies/1123/CRM"  # твой URL CRM
+CRM_API_TOKEN = os.environ.get("CRM_API_TOKEN")  # ключ лучше хранить в переменной окружения
 
-# Подключение к PostgreSQL
-DATABASE_URL = os.environ.get("DATABASE_URL")
-conn = psycopg2.connect(DATABASE_URL)
-cur = conn.cursor()
-
-def ensure_in_crm_column_type():
-    conn = psycopg2.connect(DATABASE_URL)
+# ====== Инициализация БД ======
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
 
-    # Проверяем, существует ли колонка in_crm
-    c.execute("""
-        SELECT column_name, data_type
-        FROM information_schema.columns
-        WHERE table_name = 'user_state' AND column_name = 'in_crm';
-    """)
-    column_info = c.fetchone()
+    # Таблица для состояний пользователей (контекст диалога)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS user_states (
+            user_id TEXT PRIMARY KEY,
+            state TEXT
+        )
+    ''')
 
-    # Если колонка существует и тип данных не BOOLEAN, меняем на BOOLEAN
-    if column_info and column_info[1] != 'boolean':
-        print("Меняю тип столбца 'in_crm' на BOOLEAN.")
-        c.execute("""
-            ALTER TABLE user_state 
-            ALTER COLUMN in_crm 
-            SET DATA TYPE BOOLEAN USING in_crm::BOOLEAN;
-        """)
-        conn.commit()
+    # Таблица для защиты от повторной обработки
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS processed_messages (
+            message_id TEXT PRIMARY KEY
+        )
+    ''')
 
-    conn.close()
-
-# Вызываем функцию для проверки и изменения типа
-ensure_in_crm_column_type()
-
-# Создаём таблицы, если их нет
-cur.execute("""
-CREATE TABLE IF NOT EXISTS processed_messages (
-    id TEXT PRIMARY KEY
-);
-""")
-
-cur.execute("""
-CREATE TABLE IF NOT EXISTS user_state (
-    phone TEXT PRIMARY KEY,
-    stage TEXT DEFAULT '0',
-    history TEXT DEFAULT '[]',
-    last_message TEXT,
-    last_time REAL,
-    followed_up INTEGER DEFAULT 0,
-    in_crm INTEGER DEFAULT 0
-);
-""")
-
-# Добавление столбца stage, если его нет
-cur.execute("""
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='user_state' AND column_name='stage') THEN
-        ALTER TABLE user_state ADD COLUMN stage TEXT DEFAULT '0';
-    END IF;
-END;
-$$;
-""")
-
-# Добавление столбца last_message, если его нет
-cur.execute("""
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='user_state' AND column_name='last_message') THEN
-        ALTER TABLE user_state ADD COLUMN last_message TEXT;
-    END IF;
-END;
-$$;
-""")
-
-# Добавление столбца last_time, если его нет
-cur.execute("""
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='user_state' AND column_name='last_time') THEN
-        ALTER TABLE user_state ADD COLUMN last_time REAL;
-    END IF;
-END;
-$$;
-""")
-
-# Добавление столбца followed_up, если его нет
-cur.execute("""
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='user_state' AND column_name='followed_up') THEN
-        ALTER TABLE user_state ADD COLUMN followed_up INTEGER DEFAULT 0;
-    END IF;
-END;
-$$;
-""")
-
-# Добавление столбца in_crm, если его нет
-cur.execute("""
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='user_state' AND column_name='in_crm') THEN
-        ALTER TABLE user_state ADD COLUMN in_crm INTEGER DEFAULT 0;
-    END IF;
-END;
-$$;
-""")
-
-conn.commit()
-
-def set_user_state(phone, stage, history, last_message, last_time, followed_up, in_crm=False):
-    conn = psycopg2.connect(DATABASE_URL)
-    c = conn.cursor()
-    c.execute("SELECT phone FROM user_state WHERE phone=%s", (phone,))
-    exists = c.fetchone()
-    history_json = json.dumps(history)
-    
-    if exists:
-        c.execute("""
-            UPDATE user_state 
-            SET stage=%s, history=%s, last_message=%s, last_time=%s, followed_up=%s, in_crm=%s
-            WHERE phone=%s
-        """, (stage, history_json, last_message, last_time, bool(followed_up), bool(in_crm), phone))
-    else:
-        c.execute("""
-            INSERT INTO user_state (phone, stage, history, last_message, last_time, followed_up, in_crm)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (phone, stage, history_json, last_message, last_time, bool(followed_up), bool(in_crm)))
-    
     conn.commit()
     conn.close()
 
-
-def get_user_state(phone):
-    conn = psycopg2.connect(DATABASE_URL)
+# ====== Работа с состояниями ======
+def get_user_state(user_id):
+    conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("""
-        SELECT stage, history, last_message, last_time, followed_up, in_crm 
-        FROM user_state 
-        WHERE phone=%s
-    """, (phone,))
+    c.execute("SELECT state FROM user_states WHERE user_id = ?", (user_id,))
     row = c.fetchone()
     conn.close()
-    
-    if row:
-        return {
-            "stage": row[0],
-            "history": json.loads(row[1]),
-            "last_message": row[2],
-            "last_time": row[3],
-            "followed_up": bool(row[4]),
-            "in_crm": bool(row[5])
-        }
-    return None
+    return row[0] if row else None
 
-def process_new_lead(name, phone):
-    """Обработка нового лида из CRM или бота"""
+def set_user_state(user_id, state):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("REPLACE INTO user_states (user_id, state) VALUES (?, ?)", (user_id, state))
+    conn.commit()
+    conn.close()
 
-    # Проверяем в локальной БД
-    user_data = get_user_state(phone)
-    if user_data and user_data.get("in_crm"):
-        print(f"⚠️ {phone} уже был отправлен в CRM, пропускаем")
-        return None
+# ====== Защита от повторной обработки ======
+def add_processed_message(message_id):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("INSERT OR IGNORE INTO processed_messages (message_id) VALUES (?)", (message_id,))
+    conn.commit()
+    conn.close()
 
-    # Проверяем напрямую в CRM
-    if client_exists(phone):
-        print(f"⚠️ {phone} найден в CRM, сохраняем флаг")
-        set_user_state(phone, stage="0", history=[], last_message=None, last_time=None, followed_up=False, in_crm=True)
-        return None
+def is_message_processed(message_id):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT 1 FROM processed_messages WHERE message_id = ?", (message_id,))
+    result = c.fetchone()
+    conn.close()
+    return result is not None
 
-    # Если нигде нет — создаём
-    order_id = create_order(name, phone)
-    if order_id:
-        print(f"✅ Заказ {order_id} создан для {name} ({phone})")
-        set_user_state(phone, stage="0", history=[], last_message=None, last_time=None, followed_up=False, in_crm=True)
-        return order_id
-    else:
-        print(f"❌ Ошибка создания заказа для {name} ({phone})")
-        return None
+# ====== Проверка в CRM ======
+def is_in_crm(phone):
+    try:
+        headers = {"Authorization": f"Bearer {CRM_API_TOKEN}"}
+        params = {"phone": phone}
+        response = requests.get(CRM_API_URL, headers=headers, params=params, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            return bool(data.get("results"))  # True, если клиент найден
+        return False
+    except Exception as e:
+        print(f"⚠ Ошибка запроса в CRM: {e}")
+        return False
 
+# ====== Автозапуск при старте ======
+init_db()
 
 app = Flask(__name__)
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
@@ -536,7 +433,7 @@ def webhook():
         msg_id = msg["id"]
 
         # 🔹 Проверка на дубль
-        if is_processed_message(msg_id):
+        if is_message_processed(msg_id):
             print(f"⏩ Сообщение {msg_id} уже обработано — пропускаем")
             return jsonify({"status": "duplicate"}), 200
 
@@ -545,11 +442,11 @@ def webhook():
         user_phone = msg["from"]
         user_msg = msg["text"]["body"]
 
-        # Если первый контакт — проверяем в CRM
+        # Если нет состояния — первый контакт
         if not get_user_state(user_phone):
             full_name = contacts[0]["profile"].get("name", "Клиент") if contacts else "Клиент"
-
-            # Пытаемся создать заказ, если клиента нет
+            
+            # Создаём заказ (внутри проверит CRM)
             order_id = process_new_lead(full_name, user_phone)
 
             if order_id:
@@ -557,7 +454,7 @@ def webhook():
             else:
                 print(f"⚠️ Клиент {user_phone} уже есть в CRM — заказ не создаём")
 
-            set_user_state(user_phone, stage="0", history=[], last_message=None, last_time=None, followed_up=False)
+            set_user_state(user_phone, json.dumps({"stage": "0", "history": []}))
 
         # Дальше — логика бота
         reply = get_gpt_response(user_msg, user_phone)
