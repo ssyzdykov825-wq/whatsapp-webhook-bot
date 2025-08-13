@@ -298,7 +298,7 @@ def webhook():
                 print(f"✅ Новый заказ {order_id} создан ({full_name}, {norm_phone})")
             else:
                 print(f"ℹ️ Клиент {norm_phone} уже есть в CRM или заказ не создан")
-            # создаём стартовую запись только один раз
+            # создаём стартовую запись только один раз для нового пользователя
             set_user_state(
                 norm_phone,
                 stage="0",
@@ -311,7 +311,7 @@ def webhook():
         else:
             print(f"ℹ️ Клиент {norm_phone} уже в базе, stage={user_state['stage']}, история длина={len(user_state['history'])}")
 
-        # GPT ответ с учётом истории
+        # GPT ответ с учётом истории и stage из базы
         reply = get_gpt_response(user_msg, norm_phone)
 
         # отправляем в WhatsApp (режем на части при необходимости)
