@@ -16,35 +16,34 @@ from state_manager import (
     MAX_HISTORY_FOR_GPT
 )
 
-# ✨ IMPORTING YOUR ACTUAL SALESRENDER API FUNCTIONS - ASSUMED TO BE WORKING ✨
-# This means your salesrender_api.py should contain these functions and handle API calls correctly.
+# ✨ ИМПОРТИРУЕМ ВАШИ РЕАЛЬНЫЕ ФУНКЦИИ SALESRENDER API - ПРЕДПОЛАГАЕТСЯ, ЧТО ОНИ РАБОТАЮТ КОРРЕКТНО ✨
 from salesrender_api import create_order, client_exists 
 
 
 # ==============================
-# Configuration
+# Конфигурация
 # ==============================
 app = Flask(__name__)
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 WHATSAPP_API_URL = "https://waba-v2.360dialog.io/messages"
-WHATSAPP_API_KEY = os.environ.get("WHATSAPP_API_KEY") # Ensure this is set as an env var
+WHATSAPP_API_KEY = os.environ.get("WHATSAPP_API_KEY") # Убедитесь, что это установлено как переменная окружения
 
 HEADERS = {
     "Content-Type": "application/json",
     "D360-API-KEY": WHATSAPP_API_KEY
 }
 
-# In-memory set for message ID deduplication (volatile, resets on app restart)
+# Кэш в оперативной памяти для дедупликации ID сообщений (сбрасывается при перезапуске приложения)
 PROCESSED_MESSAGES = set()
 
-# SalesRender CRM Config (used within salesrender_api.py as well, but kept here for completeness if needed elsewhere)
-# Ensure your salesrender_api.py uses these or its own method for config.
+# Конфигурация SalesRender CRM (используется и в salesrender_api.py, но оставлена здесь для полноты, если нужна в других местах)
+# Убедитесь, что ваш salesrender_api.py использует эти значения или свой метод для конфигурации.
 SALESRENDER_URL = os.environ.get("SALESRENDER_URL", "https://de.backend.salesrender.com/companies/1123/CRM")
-SALESRENDER_TOKEN = os.environ.get("SALESRENDER_TOKEN", "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXNyZW5kZXIuY29tLyIsImF1ZCI6IkNSTSIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6iuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc")
+SALESRENDER_TOKEN = os.environ.get("SALESRENDER_TOKEN", "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXNyZW5kZXIuY29tLyIsImF1ZCI6IkNSTSIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc")
 
 # ==============================
-# Phone Number Normalization
+# Нормализация номера телефона
 # ==============================
 def normalize_phone_number(phone_raw):
     """
@@ -77,13 +76,13 @@ def normalize_phone_number(phone_raw):
     return phone_digits
 
 # ==============================
-# SalesRender Utilities
+# Утилиты SalesRender
 # ==============================
-# Note: create_order and client_exists are now imported from salesrender_api.py
-# Make sure your salesrender_api.py correctly implements fetch_order_from_crm if needed there.
+# Примечание: create_order и client_exists теперь импортируются из salesrender_api.py
+# Убедитесь, что ваш salesrender_api.py корректно реализует fetch_order_from_crm, если это необходимо.
 
 def fetch_order_from_crm(order_id):
-    """Fetches order details from SalesRender CRM using GraphQL."""
+    """Извлекает детали заказа из SalesRender CRM с помощью GraphQL."""
     headers = {
         "Content-Type": "application/json",
         "Authorization": SALESRENDER_TOKEN
@@ -105,40 +104,38 @@ def fetch_order_from_crm(order_id):
     }
     try:
         response = requests.post(SALESRENDER_URL, headers=headers, json=query, timeout=10)
-        response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+        response.raise_for_status() # Вызывает HTTPError для плохих ответов (4xx или 5xx)
         data = response.json().get("data", {}).get("ordersFetcher", {}).get("orders", [])
         return data[0] if data else None
     except Exception as e:
-        print(f"❌ CRM fetch error: {e}")
+        print(f"❌ Ошибка получения из CRM: {e}")
         return None
 
 def process_new_lead(name, phone):
     """
-    Registers a new lead in bot's internal DB and creates order in CRM if needed.
-    This function is primarily for the *initial* creation of a client record in the bot's DB
-    and CRM order if the client is not in CRM. It assumes the CRM existence check is done by the caller.
+    Регистрирует нового лида во внутренней БД бота и создает заказ в CRM, если это необходимо.
+    Эта функция теперь предназначена ТОЛЬКО для управления внутренней БД бота после проверки в CRM.
     """
-    # Check if client is already in bot's DB/cache.
-    # If yes, no need to create a new record or order via this path.
+    # Эта проверка в основном для внутренней БД бота, а не для статуса CRM для первоначального решения вебхука
     if client_in_db_or_cache(phone):
         print(f"⚠️ Клиент {phone} уже в базе/кэше (в process_new_lead), пропускаем создание/обновление.")
         return None 
 
-    # If we reach here, client is new to bot's DB.
-    # Now, check CRM again to decide if we need to create an order.
-    # Note: This is an important check because client_exists might have been True earlier
-    # leading to a reply, but client still needs to be added to bot's DB.
-    crm_exists_status = client_exists(phone) # Call the real client_exists here
+    # Если мы дошли сюда, клиент новый для БД бота.
+    # Теперь снова проверяем CRM, чтобы решить, нужно ли создавать заказ.
+    # Примечание: Это важная проверка, потому что client_exists мог быть True ранее,
+    # что привело к ответу, но клиента все еще нужно добавить в БД бота.
+    crm_exists_status = client_exists(phone) # Вызываем реальную функцию client_exists здесь
 
     if crm_exists_status:
-        # Client exists in CRM, but is new to bot's DB. Just add to bot's DB, don't create new order.
-        print(f"DEBUG: Client {phone} found in CRM, but new to bot's DB. Saving to bot's DB with in_crm=True.")
+        # Клиент существует в CRM, но новый для БД бота. Просто добавляем в БД бота, не создавая новый заказ.
+        print(f"DEBUG: Клиент {phone} найден в CRM, но новый для БД бота. Сохраняем в БД бота с in_crm=True.")
         save_client_state(phone, name=name, in_crm=True)
-        return None # No new order created
+        return None # Новый заказ не создан
     else:
-        # Client does NOT exist in CRM (and is new to bot's DB). Create order.
-        print(f"DEBUG: Client {phone} NOT found in CRM. Creating order and saving to bot's DB.")
-        order_id = create_order(name, phone) # Call the real create_order
+        # Клиент НЕ найден в CRM (и новый для БД бота). Создаем заказ.
+        print(f"DEBUG: Клиент {phone} НЕ найден в CRM. Создаем заказ и сохраняем в БД бота.")
+        order_id = create_order(name, phone) # Вызываем реальную функцию create_order
 
         if order_id:
             print(f"✅ Заказ {order_id} создан для {name}, {phone}. Обновляем состояние в боте.")
@@ -152,10 +149,10 @@ def process_new_lead(name, phone):
 
 def process_salesrender_order(order):
     """
-    Processes a SalesRender order webhook. Updates client state and sends manager message.
-    Adapted from your old code, integrated with new state management.
+    Обрабатывает вебхук заказа SalesRender. Обновляет состояние клиента и отправляет сообщение менеджеру.
     """
     try:
+        # --- (Существующий код для парсинга данных заказа и нормализации телефона) ---
         if not order.get("customer") and "id" in order:
             print(f"⚠ customer пуст, подтягиваю из CRM по ID {order['id']}")
             full_order = fetch_order_from_crm(order["id"])
@@ -169,7 +166,6 @@ def process_salesrender_order(order):
         if "customer" in order:
             first_name = order.get("customer", {}).get("name", {}).get("firstName", "").strip()
             last_name = order.get("customer", {}).get("name", {}).get("lastName", "").strip()
-            # Normalize phone directly from CRM data
             phone = normalize_phone_number(order.get("customer", {}).get("phone", {}).get("raw", "").strip())
         else:
             human_fields = order.get("data", {}).get("humanNameFields", [])
@@ -178,7 +174,6 @@ def process_salesrender_order(order):
                 first_name = human_fields[0].get("value", {}).get("firstName", "").strip()
                 last_name = human_fields[0].get("value", {}).get("lastName", "").strip()
             if phone_fields:
-                # Normalize phone directly from CRM data
                 phone = normalize_phone_number(phone_fields[0].get("value", {}).get("international", "").strip())
 
         name = f"{first_name} {last_name}".strip() or "Клиент"
@@ -186,29 +181,37 @@ def process_salesrender_order(order):
         if not phone:
             print("❌ Телефон отсутствует — пропуск")
             return
+        # --- (Конец существующего кода парсинга) ---
 
-        # If client is already in the system, no need to process as new lead
-        # This prevents duplicate initial processing from SalesRender if client already messaged bot.
-        if client_in_db_or_cache(phone): # Phone is already normalized here
-            print(f"ℹ️ Клиент {phone} уже известен, обновляем его CRM статус.")
-            save_client_state(phone, name=name, in_crm=True) # Ensure CRM status is true
-            # We don't send manager message here assuming it's handled by CRM's own notifications
-            return
+        # ✨ ИЗМЕНЕННАЯ ЛОГИКА ЗДЕСЬ ✨
+        # Всегда обновляем состояние клиента во внутренней БД бота, независимо от того, новый он или известный.
+        # Это гарантирует, что БД бота всегда актуальна со статусом CRM.
+        # Это заменяет старый блок `if client_in_db_or_cache(phone): ... return`.
+        if not client_in_db_or_cache(phone):
+            # Клиент новый для БД бота (пришел из вебхука SalesRender).
+            # Мы предполагаем, что если SalesRender отправляет вебхук, клиент неявно находится в CRM.
+            print(f"ℹ️ Клиент {phone} новый для базы бота (из вебхука SalesRender), добавляем.")
+            save_client_state(phone, name=name, in_crm=True)
+        else:
+            # Клиент уже известен БД бота. Просто убедимся, что его статус CRM обновлен (он должен быть true из хука CRM).
+            print(f"ℹ️ Клиент {phone} уже известен боту, обновляем его CRM статус.")
+            save_client_state(phone, name=name, in_crm=True) # Убедимся, что in_crm=True
 
-        # For new leads from CRM, ensure they are added to our state system
-        # This will add them to DB/cache and set in_crm=True (and potentially create order if client_exists is False)
-        # Note: process_new_lead implicitly calls create_order (the imported one).
-        process_new_lead(name, phone)
 
-
-        # Manager message logic (from old code)
+        # Логика сообщения менеджеру (эта часть теперь ВСЕГДА будет выполняться, если вебхук содержит телефон)
         now = datetime.utcnow()
-        # last_sent is still in-memory for this specific rate-limiting purpose
-        if phone in last_sent and now - last_sent[phone] < timedelta(minutes=3):
-            print(f"⚠ Повторный недозвон по {phone} — пропускаем отправку менеджеру.")
-            return
+        # last_sent по-прежнему в памяти для целей ограничения частоты (сбрасывается при перезапуске приложения)
+        # Примечание: last_sent - это in-memory dict, и оно не сохраняется при перезапусках.
+        # Если вы хотите, чтобы это ограничение частоты было персистентным, его нужно перенести в БД.
+        global last_sent # Объявляем last_sent как глобальную переменную
+        if phone not in last_sent: # Инициализация, если ключа нет
+            last_sent[phone] = datetime.fromtimestamp(0) # Устанавливаем очень старое время, чтобы первое сообщение прошло
 
-        # Determine greeting (UTC+6)
+        if now - last_sent[phone] < timedelta(minutes=3):
+            print(f"⚠ Повторный недозвон по {phone} — пропускаем отправку менеджеру из-за ограничения частоты.")
+            return # Этот return по-прежнему хорош для ограничения частоты
+
+        # Определяем приветствие (UTC+6)
         now_kz = now + timedelta(hours=6)
         if 5 <= now_kz.hour < 12:
             greeting = "Қайырлы таң"
@@ -217,9 +220,17 @@ def process_salesrender_order(order):
         else:
             greeting = "Қайырлы кеш"
 
-        # Generate message via GPT
+        # Генерируем сообщение через GPT
         try:
+            # Для доступа к истории/стадии для GPT, если необходимо, явно загружаем состояние
+            current_client_state = get_client_state(phone) 
+            
+            # Корректируем промпт для сценария "недозвон", если данные вебхука содержат такой статус
+            # Предполагаем, что поле 'status' или аналогичное может существовать в полезной нагрузке вебхука,
+            # хотя оно не видно в предоставленном вами примере полезной нагрузки.
+            # Пока используем вашу существующую структуру промпта.
             if name and name != "Клиент":
+                # Этот промпт подразумевает уведомление CRM о пропущенном звонке.
                 prompt = (
                     f"{greeting}! Клиенттің аты {name}. "
                     f"Оған қоңырау шалдық, бірақ байланыс болмады. "
@@ -233,7 +244,7 @@ def process_salesrender_order(order):
                     f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз. "
                     f"Есімін қолданбаңыз."
                 )
-
+            
             gpt_response = client.chat.completions.create(
                 model="gpt-4o",
                 messages=[{"role": "user", "content": prompt}],
@@ -241,24 +252,25 @@ def process_salesrender_order(order):
             )
             message_text = gpt_response.choices[0].message.content.strip()
         except Exception as e:
-            print(f"❌ GPT error: {e}")
+            print(f"❌ Ошибка GPT: {e}")
             message_text = f"{greeting}! Біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
 
-        # Send to WhatsApp
-        send_whatsapp_message(phone, message_text) # Re-using the main send_whatsapp_message
+        # Отправляем в WhatsApp
+        send_whatsapp_message(phone, message_text)
 
-        # Remember dispatch
+        # Запоминаем отправку
         last_sent[phone] = now
-        print(f"✅ Message sent to {phone}")
+        print(f"✅ Сообщение отправлено на {phone}")
 
     except Exception as e:
-        print(f"❌ Error processing order: {e}")
+        print(f"❌ Ошибка обработки заказа: {e}")
+        import traceback
+        traceback.print_exc() # Добавляем трассировку стека для полной информации об ошибке
 
-# In-memory dict for rate-limiting manager messages (resets on app restart)
-last_sent = {}
-
+# Словарь в памяти для ограничения частоты сообщений менеджеру (сбрасывается при перезапуске приложения)
+last_sent = {} # Инициализируем здесь
 # ==============================
-# GPT Prompts (refined)
+# Промпты GPT (уточненные)
 # ==============================
 SALES_SCRIPT_PROMPT = """
 Сен — Айдос есімді Healvix көз емдеу орталығының тәжірибелі кеңесшісісің. Клиентпен жылы сөйлесіп, есімін сұрап, шын мәнінде көмектесуді мақсат тұтасың. Сен робот емессің — адам секілді, сенімді, жанашыр стилде сөйлесесің.
@@ -283,7 +295,7 @@ STAGE_PROMPTS = {
 }
 
 def build_messages_for_gpt(state, user_msg):
-    """Builds messages for GPT, using the last N messages from history + current stage."""
+    """Строит сообщения для GPT, используя последние N сообщений из истории + текущую стадию."""
     prompt = SALES_SCRIPT_PROMPT + "\n\n" + STAGE_PROMPTS.get(state["stage"], "")
     messages = [{"role": "system", "content": prompt}]
 
@@ -301,7 +313,7 @@ def build_messages_for_gpt(state, user_msg):
 
 
 def split_message(text, max_length=1000):
-    """Splits long texts by sentences or newlines for WhatsApp."""
+    """Разделяет длинные тексты по предложениям или новым строкам для WhatsApp."""
     parts = []
     text = text.strip()
     while len(text) > max_length:
@@ -316,19 +328,19 @@ def split_message(text, max_length=1000):
 
 
 def send_whatsapp_message(phone, message):
-    """Sends a message to WhatsApp via 360dialog API."""
+    """Отправляет сообщение в WhatsApp через 360dialog API."""
     payload = {"messaging_product": "whatsapp", "to": phone, "type": "text", "text": {"body": message}}
     try:
         response = requests.post(WHATSAPP_API_URL, headers=HEADERS, json=payload, timeout=15)
-        print(f"📤 WhatsApp response: {getattr(response, 'status_code', 'no_response')}")
+        print(f"📤 Ответ WhatsApp: {getattr(response, 'status_code', 'нет_ответа')}")
         return response
     except Exception as e:
-        print(f"❌ WhatsApp request error: {e}")
+        print(f"❌ Ошибка запроса WhatsApp: {e}")
         return None
 
 
 def get_gpt_response(user_msg, phone):
-    """Gets a response from GPT and updates client state."""
+    """Получает ответ от GPT и обновляет состояние клиента."""
     state = get_client_state(phone)
     messages = build_messages_for_gpt(state, user_msg)
 
@@ -340,7 +352,7 @@ def get_gpt_response(user_msg, phone):
         )
         reply = response.choices[0].message.content.strip()
     except Exception as e:
-        print(f"❌ GPT error: {e}")
+        print(f"❌ Ошибка GPT: {e}")
         return "Кешіріңіз, қазір жауап бере алмаймын."
 
     try:
@@ -361,12 +373,12 @@ def get_gpt_response(user_msg, phone):
 
 
 # ==============================
-# Flask Routes
+# Маршруты Flask
 # ==============================
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json(silent=True) or {}
-    print("📩 Incoming JSON:", data)
+    print("📩 Входящий JSON:", data)
 
     try:
         entry = (data.get("entry") or [{}])[0]
@@ -376,73 +388,73 @@ def webhook():
         contacts = value.get("contacts", [])
 
         if not messages:
-            print("INFO: No messages in webhook payload.")
+            print("INFO: Нет сообщений в полезной нагрузке вебхука.")
             return jsonify({"status": "no_message"}), 200
 
         msg = messages[0]
         msg_id = msg["id"]
 
         if msg_id in PROCESSED_MESSAGES:
-            print(f"⏩ Message {msg_id} already processed — skipping")
+            print(f"⏩ Сообщение {msg_id} уже обработано — пропускаем")
             return jsonify({"status": "duplicate"}), 200
         PROCESSED_MESSAGES.add(msg_id)
 
         user_phone = normalize_phone_number(msg.get("from")) 
         user_msg = (msg.get("text") or {}).get("body", "")
 
-        print(f"DEBUG: Processing message from normalized phone: {user_phone}, message: {user_msg}")
+        print(f"DEBUG: Обрабатываем сообщение от нормализованного телефона: {user_phone}, сообщение: {user_msg}")
 
         if not (user_phone and isinstance(user_msg, str) and user_msg.strip()):
-            print(f"INFO: Ignored message from {user_phone} due to empty content or invalid format.")
+            print(f"INFO: Сообщение от {user_phone} проигнорировано из-за пустого содержимого или неверного формата.")
             return jsonify({"status": "ignored"}), 200
 
-        # --- NEW LOGIC FOR CRM CHECK AND SILENT REGISTRATION ---
-        should_send_bot_reply = False # Default to NOT replying initially for first contact
+        # --- НОВАЯ ЛОГИКА ДЛЯ ПРОВЕРКИ CRM И ТИХОЙ РЕГИСТРАЦИИ ---
+        should_send_bot_reply = False # По умолчанию НЕ отвечаем на первый контакт
 
-        # Get name from contacts if available (used for CRM registration if client is new)
+        # Получаем имя из контактов, если доступно (используется для регистрации в CRM, если клиент новый)
         name = "Клиент" 
         if contacts and isinstance(contacts, list):
             profile = (contacts[0] or {}).get("profile") or {}
             name = profile.get("name", "Клиент")
 
-        # 1. Check if client exists in our bot's internal DB/cache (prioritize fast lookup)
+        # 1. Проверяем, существует ли клиент во внутренней БД/кэше бота (приоритет быстрому поиску)
         client_in_bot_db = client_in_db_or_cache(user_phone)
 
         if client_in_bot_db:
-            # Client is known to our bot's internal DB (either from previous interaction or SalesRender hook).
-            # Always reply.
-            print(f"DEBUG: Client {user_phone} found in bot's DB. Continuing conversation.")
+            # Клиент известен внутренней БД бота (либо из предыдущего взаимодействия, либо из хука SalesRender).
+            # Всегда отвечаем.
+            print(f"DEBUG: Клиент {user_phone} найден в БД бота. Продолжаем диалог.")
             should_send_bot_reply = True
         else:
-            # Client is NOT known to our bot's internal DB. This is a potential first-time interaction for the bot.
-            # Now, check SalesRender CRM using YOUR working client_exists.
+            # Клиент НЕ известен внутренней БД бота. Это потенциальное первое взаимодействие для бота.
+            # Теперь проверяем CRM SalesRender, используя ВАШУ работающую функцию client_exists.
             crm_already_exists = client_exists(user_phone) 
 
             if crm_already_exists:
-                # Client found in CRM, but is NEW to bot's internal DB.
-                # Add to bot's DB and then reply.
-                print(f"DEBUG: Client {user_phone} FOUND in CRM but NEW to bot's DB. Adding to bot's DB and replying.")
-                # We don't need to call create_order here as client already exists in CRM.
-                save_client_state(user_phone, name=name, in_crm=True) # Ensure 'in_crm' is set to True
+                # Клиент найден в CRM, но НОВЫЙ для внутренней БД бота.
+                # Добавляем в БД бота, а затем отвечаем.
+                print(f"DEBUG: Клиент {user_phone} НАЙДЕН в CRM, но НОВЫЙ для БД бота. Добавляем в БД бота и отвечаем.")
+                # Здесь не нужно вызывать create_order, так как клиент уже существует в CRM.
+                save_client_state(user_phone, name=name, in_crm=True) # Убедимся, что 'in_crm' установлено в True
                 should_send_bot_reply = True
             else:
-                # Client NOT found in CRM, and is NEW to bot's internal DB.
-                # Silently register in CRM (via process_new_lead) and bot's DB.
-                print(f"DEBUG: Client {user_phone} NOT found in CRM and NEW to bot's DB. Silently registering lead.")
-                process_new_lead(name, user_phone) # This calls your create_order and saves to bot's DB.
-                should_send_bot_reply = False # Bot remains silent for this first interaction
-
-        # Final decision to send reply
+                # Клиент НЕ найден в CRM, и НОВЫЙ для внутренней БД бота.
+                # Тихо регистрируем в CRM (через process_new_lead) и в БД бота.
+                print(f"DEBUG: Клиент {user_phone} НЕ найден в CRM и НОВЫЙ для БД бота. Тихо регистрируем лида.")
+                process_new_lead(name, user_phone) # Это вызывает ваш create_order и сохраняет в БД бота.
+                should_send_bot_reply = False # Бот остается без немедленного ответа для этого первого взаимодействия
+        
+        # Окончательное решение об отправке ответа
         if should_send_bot_reply:
             reply = get_gpt_response(user_msg.strip(), user_phone)
             for part in split_message(reply):
                 send_whatsapp_message(user_phone, part)
         else:
-            print(f"DEBUG: Silently processed new client {user_phone}. No immediate bot reply sent.")
+            print(f"DEBUG: Тихо обработан новый клиент {user_phone}. Немедленный ответ бота не отправлен.")
 
         return jsonify({"status": "ok"}), 200
     except Exception as e:
-        print(f"❌ Webhook error: {e}")
+        print(f"❌ Ошибка вебхука: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -450,20 +462,21 @@ def webhook():
 
 @app.route('/salesrender-hook', methods=['POST'])
 def salesrender_hook():
-    print("=== Incoming request to /salesrender-hook ===")
+    print("=== Входящий запрос на /salesrender-hook ===")
     try:
         data = request.get_json(silent=True) or {}
-        print("Payload:", json.dumps(data, indent=2, ensure_ascii=False))
+        print("Полезная нагрузка:", json.dumps(data, indent=2, ensure_ascii=False))
 
         orders = (
             data.get("data", {}).get("orders")
             or data.get("orders")
-            or [data]
+            or [data] # Запасной вариант, если это один объект заказа напрямую
         )
 
         if not orders or not isinstance(orders, list):
-            return jsonify({"error": "No orders found or invalid format"}), 400
+            return jsonify({"error": "Заказы не найдены или неверный формат"}), 400
 
+        # Обрабатываем первый заказ (или циклически, если нужно для нескольких заказов) в отдельном потоке
         threading.Thread(
             target=process_salesrender_order,
             args=(orders[0],),
@@ -472,7 +485,7 @@ def salesrender_hook():
 
         return jsonify({"status": "accepted"}), 200
     except Exception as e:
-        print(f"❌ Webhook parsing error: {e}")
+        print(f"❌ Ошибка парсинга вебхука: {e}")
         return jsonify({"error": str(e)}), 500
 
 
@@ -481,20 +494,21 @@ def home():
     return "Healvix бот іске қосылды!", 200
 
 # ==============================
-# Application Startup - Moved outside if __name__ == "__main__" for Gunicorn
+# Запуск приложения - Перенесен за пределы if __name__ == "__main__" для Gunicorn
 # ==============================
 
-print("DEBUG: Starting application initialization (outside if __name__).")
-init_db() # Initialize the database
-print("DEBUG: Database init_db() completed (outside if __name__).")
-load_cache_from_db() # Load all existing clients into cache
-print("DEBUG: Cache loaded from DB (outside if __name__).")
+print("DEBUG: Запуск инициализации приложения (вне if __name__).")
+init_db() # Инициализируем базу данных
+print("DEBUG: init_db() базы данных завершено (вне if __name__).")
+load_cache_from_db() # Загружаем всех существующих клиентов в кэш
+print("DEBUG: Кэш загружен из БД (вне if __name__).")
 
+# Запускаем фоновые потоки для follow-up и очистки
 threading.Thread(target=follow_up_checker, args=(send_whatsapp_message,), daemon=True).start()
-print("DEBUG: Follow-up checker thread started.")
+print("DEBUG: Поток проверки follow-up запущен.")
 threading.Thread(target=cleanup_old_clients, daemon=True).start()
-print("DEBUG: Cleanup old clients thread started.")
+print("DEBUG: Поток очистки старых клиентов запущен.")
 
 if __name__ == "__main__":
-    print("DEBUG: Running app in local development mode via 'python app.py'.")
+    print("DEBUG: Приложение запущено в режиме локальной разработки через 'python app.py'.")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
