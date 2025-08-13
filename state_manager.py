@@ -1,4 +1,4 @@
-import sqlite3
+import psycopg2 # Changed from sqlite3
 import json
 import time
 import threading
@@ -8,7 +8,8 @@ import os
 # ==============================
 # Configuration for State Manager
 # ==============================
-DB_PATH = "clients.db"
+# Use DATABASE_URL for PostgreSQL, typically from environment variables
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
 # Global structures (in-memory cache)
 clients_cache = {}  # phone -> state
@@ -26,100 +27,141 @@ MAX_HISTORY_FOR_GPT = int(os.environ.get("MAX_HISTORY_FOR_GPT", 10))
 CLEANUP_DAYS = int(os.environ.get("CLEANUP_DAYS", 30))
 
 # ==============================
+# PostgreSQL Connection Helper
+# ==============================
+def get_db_connection():
+    """Establishes a connection to the PostgreSQL database."""
+    if not DATABASE_URL:
+        raise ValueError("DATABASE_URL environment variable is not set!")
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        return conn
+    except Exception as e:
+        print(f"❌ Error connecting to PostgreSQL: {e}")
+        raise # Re-raise the exception to propagate it
+
+# ==============================
 # Database Initialization
 # ==============================
 def init_db():
-    """Initializes the SQLite database, creating the clients table if it doesn't exist."""
-    with state_lock:
-        conn = sqlite3.connect(DB_PATH)
+    """Initializes the PostgreSQL database, creating the clients table if it doesn't exist."""
+    conn = None
+    try:
+        conn = get_db_connection()
         cursor = conn.cursor()
+        # Using BOOLEAN for in_crm and followed_up, DOUBLE PRECISION for time
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS clients (
             phone TEXT PRIMARY KEY,
             name TEXT,
-            in_crm INTEGER DEFAULT 0,
+            in_crm BOOLEAN DEFAULT FALSE,
             stage TEXT DEFAULT '0',
             history TEXT DEFAULT '[]',
-            last_message_time REAL,
-            followed_up INTEGER DEFAULT 0
+            last_message_time DOUBLE PRECISION,
+            followed_up BOOLEAN DEFAULT FALSE
         )
         """)
         conn.commit()
-        conn.close()
-    print("Database initialized.")
+        print("PostgreSQL database initialized.")
+    except Exception as e:
+        print(f"❌ Error during PostgreSQL DB initialization: {e}")
+        # Depending on severity, you might want to raise, exit, or just log
+    finally:
+        if conn:
+            conn.close()
 
 def load_cache_from_db():
     """Loads all client records from the database into in-memory cache at startup."""
     with state_lock:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT phone, name, in_crm, stage, history, last_message_time, followed_up FROM clients")
-        rows = cursor.fetchall()
-        conn.close()
-
-        clients_cache.clear() # Clear existing cache before loading
-        for phone, name, in_crm, stage, history_json, last_time, followed_up in rows:
-            try:
-                history = json.loads(history_json) if history_json else []
-            except Exception:
-                history = [] # Fallback for corrupted history
-            clients_cache[phone] = {
-                "name": name or "Клиент",
-                "stage": stage or "0",
-                "history": history,
-                "last_time": float(last_time) if last_time else time.time(),
-                "followed_up": bool(followed_up),
-                "in_crm": bool(in_crm),
-            }
-        print(f"Cache loaded: {len(clients_cache)} clients.")
+        conn = None
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT phone, name, in_crm, stage, history, last_message_time, followed_up FROM clients")
+            rows = cursor.fetchall()
+            
+            clients_cache.clear() # Clear existing cache before loading
+            for phone, name, in_crm, stage, history_json, last_time, followed_up in rows:
+                try:
+                    history = json.loads(history_json) if history_json else []
+                except Exception:
+                    history = [] # Fallback for corrupted history
+                clients_cache[phone] = {
+                    "name": name or "Клиент",
+                    "stage": stage or "0",
+                    "history": history,
+                    "last_time": float(last_time) if last_time else time.time(),
+                    "followed_up": bool(followed_up),
+                    "in_crm": bool(in_crm),
+                }
+            print(f"Cache loaded: {len(clients_cache)} clients.")
+        except Exception as e:
+            print(f"❌ Error loading cache from PostgreSQL: {e}")
+        finally:
+            if conn:
+                conn.close()
 
 def persist_client_to_db(phone, state):
     """Saves a single client's state to the database (upsert operation)."""
     with state_lock:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT 1 FROM clients WHERE phone = ?", (phone,))
-        exists = cursor.fetchone() is not None
+        conn = None
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            
+            # Check if record exists (PostgreSQL doesn't have a direct UPSERT via INSERT OR REPLACE like SQLite)
+            cursor.execute("SELECT 1 FROM clients WHERE phone = %s", (phone,))
+            exists = cursor.fetchone() is not None
 
-        if exists:
-            cursor.execute("""
-                UPDATE clients
-                SET name=?, stage=?, history=?, last_message_time=?, followed_up=?, in_crm=?
-                WHERE phone=?
-            """, (
-                state["name"],
-                state["stage"],
-                json.dumps(state["history"], ensure_ascii=False), # Serialize history to JSON string
-                state["last_time"],
-                int(state["followed_up"]),
-                int(state["in_crm"]),
-                phone
-            ))
-        else:
-            cursor.execute("""
-                INSERT INTO clients (phone, name, stage, history, last_message_time, followed_up, in_crm)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                phone,
-                state["name"],
-                state["stage"],
-                json.dumps(state["history"], ensure_ascii=False),
-                state["last_time"],
-                int(state["followed_up"]),
-                int(state["in_crm"])
-            ))
-        conn.commit()
-        conn.close()
+            if exists:
+                cursor.execute("""
+                    UPDATE clients
+                    SET name=%s, stage=%s, history=%s, last_message_time=%s, followed_up=%s, in_crm=%s
+                    WHERE phone=%s
+                """, (
+                    state["name"],
+                    state["stage"],
+                    json.dumps(state["history"], ensure_ascii=False), # Serialize history to JSON string
+                    state["last_time"],
+                    state["followed_up"], # psycopg2 handles Python bools to PostgreSQL BOOLEAN
+                    state["in_crm"],    # psycopg2 handles Python bools to PostgreSQL BOOLEAN
+                    phone
+                ))
+            else:
+                cursor.execute("""
+                    INSERT INTO clients (phone, name, stage, history, last_message_time, followed_up, in_crm)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    phone,
+                    state["name"],
+                    state["stage"],
+                    json.dumps(state["history"], ensure_ascii=False),
+                    state["last_time"],
+                    state["followed_up"],
+                    state["in_crm"]
+                ))
+            conn.commit()
+        except Exception as e:
+            print(f"❌ Error persisting client {phone} to PostgreSQL: {e}")
+        finally:
+            if conn:
+                conn.close()
 
 def delete_client_from_db(phone):
     """Deletes a client record from the database."""
     with state_lock:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM clients WHERE phone = ?", (phone,))
-        conn.commit()
-        conn.close()
-    print(f"Client {phone} deleted from DB.")
+        conn = None
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM clients WHERE phone = %s", (phone,))
+            conn.commit()
+            print(f"Client {phone} deleted from PostgreSQL DB.")
+        except Exception as e:
+            print(f"❌ Error deleting client {phone} from PostgreSQL: {e}")
+        finally:
+            if conn:
+                conn.close()
 
 # ==============================
 # State Helper Functions (RAM <-> DB interaction)
@@ -129,12 +171,19 @@ def client_in_db_or_cache(phone):
     with state_lock:
         if phone in clients_cache:
             return True
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT 1 FROM clients WHERE phone = ?", (phone,))
-        exists = cursor.fetchone() is not None
-        conn.close()
-        return exists
+        conn = None
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1 FROM clients WHERE phone = %s", (phone,))
+            exists = cursor.fetchone() is not None
+            return exists
+        except Exception as e:
+            print(f"❌ Error checking client existence in PostgreSQL: {e}")
+            return False # Assume not exists on error
+        finally:
+            if conn:
+                conn.close()
 
 def get_client_state(phone):
     """
@@ -147,42 +196,58 @@ def get_client_state(phone):
         if state:
             return dict(state) # Return a copy
 
-        # If not in cache, try to load from DB
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT name, in_crm, stage, history, last_message_time, followed_up FROM clients WHERE phone = ?", (phone,))
-        row = cursor.fetchone()
-        conn.close()
-
-        if row:
-            name, in_crm, stage, history_json, last_time, followed_up = row
-            try:
-                history = json.loads(history_json) if history_json else []
-            except Exception:
-                history = []
+        conn = None
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT name, in_crm, stage, history, last_message_time, followed_up FROM clients WHERE phone = %s", (phone,))
+            row = cursor.fetchone()
+            
+            if row:
+                name, in_crm, stage, history_json, last_time, followed_up = row
+                try:
+                    history = json.loads(history_json) if history_json else []
+                except Exception:
+                    history = []
+                state = {
+                    "name": name or "Клиент",
+                    "stage": stage or "0",
+                    "history": history,
+                    "last_time": float(last_time) if last_time else time.time(),
+                    "followed_up": bool(followed_up),
+                    "in_crm": bool(in_crm),
+                }
+                clients_cache[phone] = dict(state) # Add to cache
+                return dict(state) # Return a copy
+            
+            # If not in DB, create default state
             state = {
-                "name": name or "Клиент",
-                "stage": stage or "0",
-                "history": history,
-                "last_time": float(last_time) if last_time else time.time(),
-                "followed_up": bool(followed_up),
-                "in_crm": bool(in_crm),
+                "name": "Клиент",
+                "stage": "0",
+                "history": [],
+                "last_time": time.time(),
+                "followed_up": False,
+                "in_crm": False,
             }
             clients_cache[phone] = dict(state) # Add to cache
+            persist_client_to_db(phone, state) # Persist new default state
             return dict(state) # Return a copy
-        
-        # If not in DB, create default state
-        state = {
-            "name": "Клиент",
-            "stage": "0",
-            "history": [],
-            "last_time": time.time(),
-            "followed_up": False,
-            "in_crm": False,
-        }
-        clients_cache[phone] = dict(state) # Add to cache
-        persist_client_to_db(phone, state) # Persist new default state
-        return dict(state) # Return a copy
+        except Exception as e:
+            print(f"❌ Error getting client state from PostgreSQL: {e}")
+            # Fallback to creating a new default state if DB access fails
+            state = {
+                "name": "Клиент",
+                "stage": "0",
+                "history": [],
+                "last_time": time.time(),
+                "followed_up": False,
+                "in_crm": False,
+            }
+            clients_cache[phone] = dict(state)
+            return dict(state)
+        finally:
+            if conn:
+                conn.close()
 
 def save_client_state(phone, **kwargs):
     """
@@ -214,7 +279,7 @@ def save_client_state(phone, **kwargs):
         persist_client_to_db(phone, current_state)
 
 # ==============================
-# Background Tasks
+# Background Tasks (no changes here, they use save_client_state)
 # ==============================
 def follow_up_checker(send_whatsapp_message_func):
     """Periodically checks for clients needing a follow-up message."""
