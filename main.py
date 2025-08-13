@@ -14,11 +14,7 @@ from state_manager import (
     follow_up_checker, cleanup_old_clients,
     MAX_HISTORY_FOR_GPT # Used in build_messages_for_gpt
 )
-    print("DEBUG: Starting application initialization...") # ✨ ДОБАВЛЕНО ✨
-    init_db() # Initialize the database
-    print("DEBUG: Database init_db() completed.") # ✨ ДОБАВЛЕНО ✨
-    load_cache_from_db() # Load all existing clients into cache
-    print("DEBUG: Cache loaded from DB.") # ✨ ДОБАВЛЕНО ✨
+
 # NOTE: You'll need to create salesrender_api.py if it doesn't exist
 # and ensure it contains create_order and client_exists functions.
 # For demonstration, I'll add dummy functions here if not provided.
