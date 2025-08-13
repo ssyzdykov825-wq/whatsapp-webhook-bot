@@ -193,6 +193,14 @@ STAGE_PROMPTS = {
     "6": "Диалог завершён, вежливо отвечай коротко."
 }
 
+def is_meaningful_message(msg: str) -> bool:
+    msg_clean = msg.strip().lower()
+    if len(msg_clean) <= 2:
+        return False
+    if msg_clean in GREETING_KEYWORDS:
+        return False
+    return True
+
 def get_gpt_response(user_msg: str, user_phone: str) -> str:
     # получаем текущее состояние пользователя
     user_data = get_user_state(user_phone) or {
@@ -211,7 +219,7 @@ def get_gpt_response(user_msg: str, user_phone: str) -> str:
     # формируем системный prompt с учетом текущего stage
     prompt = SALES_SCRIPT_PROMPT + "\n\n" + STAGE_PROMPTS.get(stage, "")
 
-    # собираем историю в виде сообщений для GPT
+    # собираем историю для GPT
     messages = [{"role": "system", "content": prompt}]
     for item in history[-20:]:  # учитываем максимум 20 последних сообщений
         if "user" in item:
@@ -222,7 +230,7 @@ def get_gpt_response(user_msg: str, user_phone: str) -> str:
 
     # запрос к GPT
     resp = client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-4o",  # или gpt-4o-mini
         messages=messages,
         temperature=0.7
     )
@@ -230,7 +238,7 @@ def get_gpt_response(user_msg: str, user_phone: str) -> str:
 
     # "умная" логика перехода stage
     next_stage = stage
-    if user_msg != last_msg and len(user_msg.strip()) > 2:
+    if is_meaningful_message(user_msg) and user_msg != last_msg:
         try:
             next_stage = str(min(int(stage) + 1, 6))
         except Exception:
@@ -261,7 +269,7 @@ def webhook():
         change = entry.get("changes", [])[0]
         value = change.get("value", {})
 
-        # пропускаем статусы (sent/delivered/read)
+        # статусы доставок (sent/delivered/read) — пропускаем
         if value.get("statuses") and not value.get("messages"):
             return jsonify({"status": "status_event"}), 200
 
@@ -274,7 +282,7 @@ def webhook():
         msg = messages[0]
         msg_id = msg["id"]
 
-        # проверка на дубль
+        # дубль?
         if is_message_processed(msg_id):
             print(f"⏩ Сообщение {msg_id} уже обработано — пропускаем")
             return jsonify({"status": "duplicate"}), 200
@@ -289,7 +297,7 @@ def webhook():
         user_msg = msg["text"]["body"]
         full_name = contacts[0]["profile"].get("name", "Клиент") if contacts else "Клиент"
 
-        # нормализуем номер (для единообразия)
+        # нормализуем номер
         norm_phone = user_phone.replace("+", "").replace(" ", "").replace("-", "")
 
         # получаем текущее состояние пользователя
@@ -301,7 +309,7 @@ def webhook():
                 print(f"✅ Новый заказ {order_id} создан ({full_name}, {norm_phone})")
             else:
                 print(f"ℹ️ Клиент {norm_phone} уже есть в CRM или заказ не создан")
-            # стартовое состояние, history пустая
+            # создаём стартовую запись только один раз
             set_user_state(
                 norm_phone,
                 stage="0",
@@ -312,13 +320,12 @@ def webhook():
                 in_crm=True
             )
         else:
-            # уже есть состояние — используем существующую stage и историю
             print(f"ℹ️ Клиент {norm_phone} уже в базе, stage={user_state['stage']}, история длина={len(user_state['history'])}")
 
-        # получаем ответ GPT с учётом истории
+        # GPT ответ с учётом истории и умной логики stage
         reply = get_gpt_response(user_msg, norm_phone)
 
-        # отправка в WhatsApp (если длинное, режем на части)
+        # отправляем в WhatsApp (режем на части при необходимости)
         for part in split_message(reply):
             send_whatsapp_360(norm_phone, part)
 
