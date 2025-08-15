@@ -181,6 +181,10 @@ def process_salesrender_order(order):
         if not phone:
             print("❌ Телефон отсутствует — пропуск")
             return
+        # --- Вставка обработчика статуса недозвон ---
+        new_status = order.get("status")  # поправь путь, если статус приходит в другом поле
+        handle_crm_status_update(phone, new_status)
+        
         # --- (Конец существующего кода парсинга) ---
 
         # ✨ ИЗМЕНЕННАЯ ЛОГИКА ЗДЕСЬ ✨
