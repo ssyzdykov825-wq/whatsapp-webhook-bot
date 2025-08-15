@@ -403,7 +403,7 @@ def send_whatsapp_message(phone, message):
 
 
 def get_gpt_response(user_msg, phone):
-    """Получает ответ от GPT и обновляет состояние клиента."""
+    """Получает ответ от GPT, делит по [SPLIT] или автоматически разбивает длинный текст, отправляет в WhatsApp."""
     state = get_client_state(phone)
     messages = build_messages_for_gpt(state, user_msg)
 
@@ -422,6 +422,17 @@ def get_gpt_response(user_msg, phone):
         print(f"❌ Ошибка GPT: {e}")
         return "Кешіріңіз, қазір жауап бере алмаймын."
 
+    # Разбиваем по [SPLIT] или по длине
+    if "[SPLIT]" in reply:
+        parts = [p.strip() for p in reply.split("[SPLIT]") if p.strip()]
+    else:
+        parts = split_message(reply, max_length=200)
+
+    # Отправка всех частей в WhatsApp
+    for part in parts:
+        send_whatsapp_message(phone, part)
+
+    # Обновление истории клиента
     try:
         next_stage_int = min(6, max(0, int(state["stage"])) + 1)
     except Exception:
@@ -436,6 +447,7 @@ def get_gpt_response(user_msg, phone):
         last_time=time.time(),
         followed_up=False
     )
+
     return reply
 
 
