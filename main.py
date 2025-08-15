@@ -388,7 +388,7 @@ def build_messages_for_gpt(state, user_msg):
     return messages
 
 
-def split_message(text, max_length=1000):
+def split_message(text, max_length=150):
     """Разделяет длинные тексты по предложениям или новым строкам для WhatsApp."""
     parts = []
     text = text.strip()
