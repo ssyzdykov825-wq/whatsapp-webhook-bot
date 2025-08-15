@@ -407,16 +407,17 @@ def get_gpt_response(user_msg, phone):
     state = get_client_state(phone)
     messages = build_messages_for_gpt(state, user_msg)
 
-    try:
-response = client.chat.completions.create(
-    model="gpt-4o",
-    messages=messages,
-    temperature=0.75,
-    top_p=0.9,
-    frequency_penalty=0.4,
-    presence_penalty=0.5,
-    max_tokens=400
-)
+try:
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=messages,
+        temperature=0.75,
+        top_p=0.9,
+        frequency_penalty=0.4,
+        presence_penalty=0.5,
+        max_tokens=400
+    )
+    
         reply = response.choices[0].message.content.strip()
     except Exception as e:
         print(f"❌ Ошибка GPT: {e}")
