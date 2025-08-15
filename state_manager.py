@@ -18,7 +18,7 @@ clients_cache = {}  # phone -> state
 state_lock = threading.RLock()
 
 # Bot behavior settings (moved from main app to state manager as they relate to state)
-FOLLOW_UP_DELAY = int(os.environ.get("FOLLOW_UP_DELAY", 60))  # seconds
+FOLLOW_UP_DELAY = int(os.environ.get("FOLLOW_UP_DELAY", 12 * 60 * 60))  # 12 часов
 FOLLOW_UP_MESSAGE = os.environ.get(
     "FOLLOW_UP_MESSAGE",
     "Сізден жауап болмай жатыр 🤔 Сұрақтарыңыз болса, жауап беруге дайынмын."
