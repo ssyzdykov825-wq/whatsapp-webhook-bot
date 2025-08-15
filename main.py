@@ -417,8 +417,18 @@ def send_whatsapp_message(phone, message):
 
 def get_gpt_response(user_msg, phone):
     """Получает ответ от GPT, делит по [SPLIT] или автоматически разбивает длинный текст, отправляет в WhatsApp."""
+
+    # --- Проверка статуса в CRM ---
+    lead = get_lead_from_crm(phone)  # подтягиваем лид из SalesRender по номеру
+    if not lead or lead.get("status") != "недозвон":
+        print(f"Бот молчит, статус: {lead['status'] if lead else 'нет лида'}")
+        return None  # бот не отвечает
+
+    # --- Далее существующая логика GPT ---
     state = get_client_state(phone)
     messages = build_messages_for_gpt(state, user_msg)
+    
+    # ... остальной код функции
 
     try:
         response = client.chat.completions.create(
