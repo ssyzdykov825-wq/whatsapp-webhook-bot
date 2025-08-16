@@ -89,20 +89,29 @@ def webhook():
         messages = value.get("messages", [])
         contacts = value.get("contacts", [])
 
-        if not messages:
-            return jsonify({"status": "no messages"}), 200
+        phone = None
+        name = "Клиент"
 
-        # Берём номер телефона из любого сообщения
-        phone = messages[0].get("from", "")
-        # Берём имя из контактов, если есть, иначе дефолт
-        name = contacts[0]["profile"].get("name", "Клиент") if contacts else "Клиент"
+        # Берём номер телефона
+        if messages:
+            phone = messages[0].get("from")
+        elif contacts:
+            phone = contacts[0].get("wa_id")
+
+        # Берём имя
+        if contacts and "profile" in contacts[0]:
+            name = contacts[0]["profile"].get("name", "Клиент")
+
+        if not phone:
+            print("❌ Не удалось определить номер телефона")
+            return jsonify({"status": "no phone"}), 200
 
         # Проверка — есть ли клиент в CRM
         if client_exists(phone):
             print(f"⚠️ Клиент {phone} уже есть в CRM — заказ не создаём")
             return jsonify({"status": "client exists"}), 200
 
-        # Создаём заказ в CRM (даже если это голосовое/медиа)
+        # Создаём заказ в CRM
         order_id = create_order(name, phone)
         if not order_id:
             return jsonify({"status": "error creating order"}), 500
@@ -116,6 +125,7 @@ def webhook():
         return jsonify({"status": "error"}), 500
 
     return jsonify({"status": "ok"}), 200
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
