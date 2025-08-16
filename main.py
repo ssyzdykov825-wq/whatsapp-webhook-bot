@@ -511,59 +511,49 @@ def webhook():
         PROCESSED_MESSAGES.add(msg_id)
 
         user_phone = normalize_phone_number(msg.get("from")) 
-        user_msg = (msg.get("text") or {}).get("body", "")
+        user_msg = (msg.get("text") or {}).get("body", "")  # может быть пустым
+        msg_type = msg.get("type")
 
-        print(f"DEBUG: Обрабатываем сообщение от нормализованного телефона: {user_phone}, сообщение: {user_msg}")
+        print(f"DEBUG: Обрабатываем сообщение от {user_phone}, тип: {msg_type}, текст: {user_msg}")
 
-        if not (user_phone and isinstance(user_msg, str) and user_msg.strip()):
-            print(f"INFO: Сообщение от {user_phone} проигнорировано из-за пустого содержимого или неверного формата.")
+        if not user_phone:
+            print(f"INFO: Сообщение без номера — игнорируем")
             return jsonify({"status": "ignored"}), 200
 
-        # --- НОВАЯ ЛОГИКА ДЛЯ ПРОВЕРКИ CRM И ТИХОЙ РЕГИСТРАЦИИ ---
-        should_send_bot_reply = False # По умолчанию НЕ отвечаем на первый контакт
-
-        # Получаем имя из контактов, если доступно (используется для регистрации в CRM, если клиент новый)
-        name = "Клиент" 
+        # --- Получаем имя ---
+        name = "Клиент"
         if contacts and isinstance(contacts, list):
             profile = (contacts[0] or {}).get("profile") or {}
             name = profile.get("name", "Клиент")
 
-        # 1. Проверяем, существует ли клиент во внутренней БД/кэше бота (приоритет быстрому поиску)
+        # --- Проверка внутренней БД ---
         client_in_bot_db = client_in_db_or_cache(user_phone)
+        should_send_bot_reply = False
 
         if client_in_bot_db:
-            # Клиент известен внутренней БД бота (либо из предыдущего взаимодействия, либо из хука SalesRender).
-            # Всегда отвечаем.
             print(f"DEBUG: Клиент {user_phone} найден в БД бота. Продолжаем диалог.")
             should_send_bot_reply = True
         else:
-            # Клиент НЕ известен внутренней БД бота. Это потенциальное первое взаимодействие для бота.
-            # Теперь проверяем CRM SalesRender, используя ВАШУ работающую функцию client_exists.
-            crm_already_exists = client_exists(user_phone) 
-
+            crm_already_exists = client_exists(user_phone)
             if crm_already_exists:
-                # Клиент найден в CRM, но НОВЫЙ для внутренней БД бота.
-                # Добавляем в БД бота, а затем отвечаем.
-                print(f"DEBUG: Клиент {user_phone} НАЙДЕН в CRM, но НОВЫЙ для БД бота. Добавляем в БД бота и отвечаем.")
-                # Здесь не нужно вызывать create_order, так как клиент уже существует в CRM.
-                save_client_state(user_phone, name=name, in_crm=True) # Убедимся, что 'in_crm' установлено в True
+                print(f"DEBUG: Клиент {user_phone} найден в CRM, добавляем в БД бота.")
+                save_client_state(user_phone, name=name, in_crm=True)
                 should_send_bot_reply = True
             else:
-                # Клиент НЕ найден в CRM, и НОВЫЙ для внутренней БД бота.
-                # Тихо регистрируем в CRM (через process_new_lead) и в БД бота.
-                print(f"DEBUG: Клиент {user_phone} НЕ найден в CRM и НОВЫЙ для БД бота. Тихо регистрируем лида.")
-                process_new_lead(name, user_phone) # Это вызывает ваш create_order и сохраняет в БД бота.
-                should_send_bot_reply = False # Бот остается без немедленного ответа для этого первого взаимодействия
-        
-        # Окончательное решение об отправке ответа
-        if should_send_bot_reply:
+                print(f"DEBUG: Новый клиент {user_phone}, регистрируем в CRM.")
+                process_new_lead(name, user_phone)
+                should_send_bot_reply = False
+
+        # --- Отправка ответа только для известных клиентов ---
+        if should_send_bot_reply and msg_type == "text" and user_msg.strip():
             reply = get_gpt_response(user_msg.strip(), user_phone)
             for part in split_message(reply):
                 send_whatsapp_message(user_phone, part)
         else:
-            print(f"DEBUG: Тихо обработан новый клиент {user_phone}. Немедленный ответ бота не отправлен.")
+            print(f"DEBUG: Ответ бота не отправляется. CRM обновлена для {user_phone}")
 
         return jsonify({"status": "ok"}), 200
+
     except Exception as e:
         print(f"❌ Ошибка вебхука: {e}")
         import traceback
