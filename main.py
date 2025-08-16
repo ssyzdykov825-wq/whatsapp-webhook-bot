@@ -430,7 +430,11 @@ def send_whatsapp_message(phone, message):
 
 
 def get_gpt_response(user_msg, phone):
-    """Получает ответ от GPT, делит по [SPLIT] или автоматически разбивает длинный текст, отправляет в WhatsApp."""
+    """Получает ответ от GPT, делит по [SPLIT] или автоматически разбивает длинный текст."""
+    if not AUTO_REPLY_ENABLED:
+        print(f"⚠ AUTO_REPLY_ENABLED = False, ответ для {phone} не будет отправлен")
+        return None  # или пустая строка
+
     state = get_client_state(phone)
     messages = build_messages_for_gpt(state, user_msg)
     
@@ -445,6 +449,7 @@ def get_gpt_response(user_msg, phone):
             max_tokens=400
         )
         reply = response.choices[0].message.content.strip()
+        return reply
     except Exception as e:
         print(f"❌ Ошибка GPT: {e}")
         return "Кешіріңіз, қазір жауап бере алмаймын."
