@@ -287,27 +287,12 @@ def save_client_state(phone, **kwargs):
         persist_client_to_db(phone, current_state)
 
 # ==============================
-# Background Tasks (no changes here, they use save_client_state)
+# Background Tasks
 # ==============================
 def follow_up_checker(send_whatsapp_message_func):
-    """Periodically checks for clients needing a follow-up message."""
+    """Follow-up отключен"""
     while True:
-        try:
-            now = time.time()
-            with state_lock:
-                # Create a copy of items to iterate safely
-                items = list(clients_cache.items())
-
-            for phone, st in items:
-                last_time = st.get("last_time")
-                followed_up = st.get("followed_up", False)
-                if last_time and (now - last_time > FOLLOW_UP_DELAY) and not followed_up:
-                    print(f"[🔔] Отправка follow-up клиенту {phone}")
-                    send_whatsapp_message_func(phone, "📌 Айдос: " + FOLLOW_UP_MESSAGE)
-                    save_client_state(phone, followed_up=True) # Update state in DB and cache
-        except Exception as e:
-            print(f"❌ Follow-up error: {e}")
-        time.sleep(30) # Check every 30 seconds
+        time.sleep(60)  # просто ждет и ничего не делает
 
 def cleanup_old_clients():
     """Periodically removes old client records from cache and database."""
