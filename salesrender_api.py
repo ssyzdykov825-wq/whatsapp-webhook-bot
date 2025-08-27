@@ -183,7 +183,7 @@ def create_order(full_name, phone):
         print(f"\n=== create_order вызван ===")
         print(f"DEBUG: variables = {variables}")
         response = requests.post(
-            SALESRENDER_BASE_URL,
+            SALESRENDER_URL,
             json={"query": mutation, "variables": variables},
             headers=headers,
             timeout=10
