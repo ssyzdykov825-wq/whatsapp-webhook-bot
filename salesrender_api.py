@@ -134,30 +134,13 @@ def webhook():
             print("❌ Не удалось определить номер телефона")
             return jsonify({"status": "no phone"}), 200
 
-        # Проверяем последний заказ
-        last_order = client_exists(phone)
+        # Используем твою функцию process_new_lead
+        order_id = process_new_lead(name, phone)
 
-        allowed_statuses = {"Спам/Тест", "Отменен", "Недозвон 5 дней", "Недозвон", "Перезвонить"}
-
-        if last_order:
-            status = last_order["status"]["name"]
-            if status in allowed_statuses:
-                print(f"♻️ Статус {status} позволяет создать новый заказ")
-                order_id = create_order(name, phone)
-                if order_id:
-                    print(f"✅ Новый заказ {order_id} создан ({name}, {phone})")
-                else:
-                    return jsonify({"status": "error creating order"}), 500
-            else:
-                print(f"⏳ Последний заказ {last_order['id']} со статусом {status} — новый не создаём")
-                return jsonify({"status": "already processing"}), 200
+        if order_id:
+            print(f"✅ Заказ {order_id} создан ({name}, {phone})")
         else:
-            # заказов нет → создаём первый
-            order_id = create_order(name, phone)
-            if order_id:
-                print(f"✅ Новый заказ {order_id} создан ({name}, {phone})")
-            else:
-                return jsonify({"status": "error creating order"}), 500
+            print(f"ℹ️ Новый заказ НЕ был создан для {phone}")
 
     except Exception as e:
         print(f"❌ Ошибка в webhook: {e}")
@@ -166,7 +149,3 @@ def webhook():
         return jsonify({"status": "error"}), 500
 
     return jsonify({"status": "ok"}), 200
-
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
