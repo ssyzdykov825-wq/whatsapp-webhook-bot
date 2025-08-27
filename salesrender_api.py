@@ -21,14 +21,6 @@ def normalize_phone_for_crm(phone: str) -> str:
 import requests
 
 def client_exists(phone):
-    """
-    Проверяет клиента по телефону.
-    Возвращает словарь:
-    {
-        "has_active": bool,
-        "last_order": dict | None
-    }
-    """
     headers = {
         "Authorization": SALESRENDER_TOKEN,
         "Content-Type": "application/json"
@@ -39,15 +31,12 @@ def client_exists(phone):
         query {{
             ordersFetcher(
                 filters: {{ include: {{ phones: ["{phone}"] }} }}
-                limit: 5
+                limit: 1
                 sort: {{ field: "id", order: DESC }}
             ) {{
                 orders {{
                     id
                     status {{ name }}
-                    data {{
-                        phoneFields {{ value {{ raw }} }}
-                    }}
                 }}
             }}
         }}
@@ -66,13 +55,16 @@ def client_exists(phone):
         last_order = orders[0]
         last_status = (last_order.get("status") or {}).get("name", "").strip().lower()
 
-        allowed_statuses = {"спам/тест", "отменен", "недозвон 5 дней", "недозвон", "перезвонить"}
+        # статусы, при которых МОЖНО создавать новый заказ
+        closed_statuses = {
+            "спам/тест", "отменен", "недозвон 5 дней", "недозвон", "перезвонить"
+        }
 
-        if last_status in allowed_statuses:
-            print(f"✅ Последний заказ {last_order['id']} в статусе '{last_status}' → можно создать новый")
+        if last_status in closed_statuses:
+            print(f"✅ Последний заказ {last_order['id']} закрыт ({last_status}) → можно создать новый")
             return {"has_active": False, "last_order": last_order}
         else:
-            print(f"⏳ У клиента есть активный заказ {last_order['id']} со статусом '{last_status}'")
+            print(f"⏳ У клиента есть активный заказ {last_order['id']} ({last_status}) → новый не создаём")
             return {"has_active": True, "last_order": last_order}
 
     except Exception as e:
