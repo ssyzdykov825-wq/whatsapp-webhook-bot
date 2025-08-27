@@ -511,7 +511,7 @@ def webhook():
             return jsonify({"status": "duplicate"}), 200
         PROCESSED_MESSAGES.add(msg_id)
 
-        user_phone = normalize_phone_number(msg.get("from")) 
+        user_phone = normalize_phone_number(msg.get("from"))
         user_msg = (msg.get("text") or {}).get("body", "")  # может быть пустым
         msg_type = msg.get("type")
 
@@ -529,38 +529,21 @@ def webhook():
 
         print(f"STEP 1: user_phone={user_phone}, name={name}")
 
-        # --- Проверка клиента ---
+        # --- Проверка клиента в БД бота ---
         client_in_bot_db = client_in_db_or_cache(user_phone)
         print(f"STEP 2: client_in_bot_db={client_in_bot_db}")
         should_send_bot_reply = False
 
-        # разрешённые статусы (приведём к нижнему регистру)
-        allowed_statuses = {"спам/тест", "отменен", "недозвон 5 дней", "недозвон", "перезвонить"}
-
-        crm_info = client_exists(user_phone)  # ⚠️ возвращает словарь {"id": ..., "status": {"name": ...}} или None
+        # --- Проверка клиента в CRM ---
+        crm_info = client_exists(user_phone)  # ⚠️ возвращает {"has_active": bool, "last_order": {...}}
         print(f"STEP 3: client_exists вернул: {crm_info}")
 
-        if crm_info:
-            crm_status = (crm_info.get("status") or {}).get("name", "")
-            crm_status_normalized = crm_status.strip().lower()
-            print(f"STEP 4: Найден в CRM со статусом '{crm_status}' (нормализовано: '{crm_status_normalized}')")
-
-            if crm_status_normalized in allowed_statuses:
-                print(f"STEP 5: Статус '{crm_status}' разрешён → создаём заказ")
-                try:
-                    order_id = process_new_lead(name, user_phone)
-                    print("📦 process_new_lead вернул:", order_id)
-                except Exception as e:
-                    print(f"❌ Ошибка при создании заказа: {e}")
-                    import traceback
-                    traceback.print_exc()
-            else:
-                print(f"STEP 5: Статус '{crm_status}' активный → заказ НЕ создаём")
-
+        if crm_info["has_active"]:
+            print("🚫 Найден активный заказ → новый заказ НЕ создаём")
             save_client_state(user_phone, name=name, in_crm=True)
             should_send_bot_reply = True
         else:
-            print("STEP 4: Новый клиент → создаём заказ")
+            print("✅ Нет активных заказов → создаём новый")
             try:
                 order_id = process_new_lead(name, user_phone)
                 print("📦 process_new_lead вернул:", order_id)
@@ -572,12 +555,12 @@ def webhook():
 
         # --- Отправка ответа ---
         if should_send_bot_reply and msg_type == "text" and user_msg.strip():
-            print(f"STEP 6: Отправляем ответ бота клиенту {user_phone}")
+            print(f"STEP 4: Отправляем ответ бота клиенту {user_phone}")
             reply = get_gpt_response(user_msg.strip(), user_phone)
             for part in split_message(reply):
                 send_whatsapp_message(user_phone, part)
         else:
-            print(f"STEP 6: Ответ бота не отправляется. CRM обновлена для {user_phone}")
+            print(f"STEP 4: Ответ бота не отправляется. CRM обновлена для {user_phone}")
 
         return jsonify({"status": "ok"}), 200
 
