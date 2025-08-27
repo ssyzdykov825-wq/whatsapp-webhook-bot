@@ -53,7 +53,7 @@ def client_exists(phone):
 
 
 def create_order(full_name, phone):
-    """Создаёт заказ в SalesRender"""
+    """Создаёт заказ в SalesRender и возвращает его ID или None"""
     mutation = """
     mutation($firstName: String!, $lastName: String!, $phone: String!) {
       orderMutation {
@@ -76,7 +76,9 @@ def create_order(full_name, phone):
       }
     }
     """
-    name_parts = full_name.strip().split(" ", 1)
+
+    # Разделяем имя
+    name_parts = full_name.strip().split(" ", 1) if full_name else ["", ""]
     first_name = name_parts[0]
     last_name = name_parts[1] if len(name_parts) > 1 else ""
 
@@ -92,14 +94,37 @@ def create_order(full_name, phone):
     }
 
     try:
-        response = requests.post(SALESRENDER_BASE_URL, json={"query": mutation, "variables": variables}, headers=headers)
-        data = response.json()
-        print("📦 Ответ создания заказа:", data)
-        if "errors" in data:
+        print(f"\n=== create_order вызван ===")
+        print(f"DEBUG: variables = {variables}")
+        response = requests.post(
+            SALESRENDER_BASE_URL,
+            json={"query": mutation, "variables": variables},
+            headers=headers,
+            timeout=10
+        )
+        print(f"DEBUG: HTTP {response.status_code}")
+        try:
+            data = response.json()
+            print(f"📦 Полный ответ CRM: {data}")
+        except Exception:
+            print("❌ Не удалось распарсить JSON, вот сырой ответ:")
+            print(response.text)
             return None
-        return data["data"]["orderMutation"]["addOrder"]["id"]
+
+        if "errors" in data:
+            print(f"❌ CRM вернула ошибки: {data['errors']}")
+            return None
+
+        order_id = data.get("data", {}).get("orderMutation", {}).get("addOrder", {}).get("id")
+        if order_id:
+            print(f"✅ Заказ успешно создан, ID={order_id}")
+            return order_id
+        else:
+            print("⚠️ CRM не вернула ID заказа")
+            return None
+
     except Exception as e:
-        print(f"❌ Ошибка создания заказа: {e}")
+        print(f"❌ Ошибка при запросе в CRM: {e}")
         return None
 
 
