@@ -121,47 +121,45 @@ def process_new_lead(name, phone):
     Проверяет клиента в CRM и решает — создавать новый заказ или нет.
     """
     allowed_statuses = {"Спам/Тест", "Отменен", "Недозвон 5 дней", "Недозвон", "Перезвонить"}
-
-    print(f"\n=== process_new_lead запущен для {phone}, имя={name} ===")
+    print(f"\n=== process_new_lead START ===")
+    print(f"DEBUG: входные данные name={name}, phone={phone}")
 
     if client_in_db_or_cache(phone):
-        print(f"⚠️ Клиент {phone} уже есть во внутренней базе бота — заказ не создаём")
+        print(f"⚠️ Клиент {phone} уже есть во внутренней базе бота — заказ НЕ создаём")
         return None
 
     crm_order = client_exists(phone)
-    print(f"DEBUG: client_exists({phone}) вернул {crm_order}")
+    print(f"DEBUG: client_exists вернул: {crm_order}")
 
     if crm_order:
-        status = crm_order.get("status", {}).get("name") if crm_order.get("status") else None
-        print(f"🔍 Клиент {phone} найден в CRM, статус: {status}")
+        status = crm_order.get("status", {}).get("name")
+        print(f"🔍 Клиент {phone} найден в CRM со статусом: {status}")
 
         if status in allowed_statuses:
             print(f"✅ Статус '{status}' разрешён — вызываем create_order")
-            print(f"DEBUG: передаём в create_order name={name}, phone={phone}")
             order_id = create_order(name, phone)
-            print(f"DEBUG: результат create_order = {order_id}")
+            print(f"DEBUG: результат create_order → {order_id}")
             if order_id:
                 print(f"🎉 Новый заказ {order_id} создан для {name}, {phone}")
                 save_client_state(phone, name=name, in_crm=True)
                 return order_id
             else:
-                print(f"❌ CRM вернула ошибку при создании заказа для {phone}")
+                print(f"❌ Ошибка при создании заказа для {phone}")
                 return None
         else:
-            print(f"⏳ Статус '{status}' НЕ разрешён — новый заказ не создаём")
+            print(f"⏳ Статус '{status}' не разрешён — заказ НЕ создаём")
             save_client_state(phone, name=name, in_crm=True)
             return None
     else:
         print(f"🆕 Клиент {phone} не найден в CRM — вызываем create_order")
-        print(f"DEBUG: передаём в create_order name={name}, phone={phone}")
         order_id = create_order(name, phone)
-        print(f"DEBUG: результат create_order = {order_id}")
+        print(f"DEBUG: результат create_order → {order_id}")
         if order_id:
             print(f"🎉 Новый заказ {order_id} создан для {name}, {phone}")
             save_client_state(phone, name=name, in_crm=True)
             return order_id
         else:
-            print(f"❌ CRM вернула ошибку при создании заказа для {phone}")
+            print(f"❌ Ошибка при создании заказа для {phone}")
             return None
 
 
