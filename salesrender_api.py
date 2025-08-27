@@ -7,10 +7,8 @@ app = Flask(__name__)
 SALESRENDER_BASE_URL = "https://de.backend.salesrender.com/companies/1123/CRM"
 SALESRENDER_API_KEY = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXNyZW5kZXIuY29tLyIsImF1ZCI6IkNSTSIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc"
 
-# --- ДОПОЛНИТЕЛЬНЫЕ ФУНКЦИИ ---
-
-def get_customer_id_by_phone(phone: str):
-    """Ищем клиента по телефону"""
+def client_exists(phone):
+    """Проверяет, есть ли клиент с таким телефоном в SalesRender"""
     url = f"{SALESRENDER_BASE_URL}/clients?search={phone}"
     headers = {
         "Authorization": SALESRENDER_API_KEY,
@@ -19,67 +17,13 @@ def get_customer_id_by_phone(phone: str):
     try:
         resp = requests.get(url, headers=headers, timeout=10)
         resp.raise_for_status()
-        items = resp.json().get("data", [])
-        return items[0].get("id") if items else None
+        data = resp.json()
+        exists = len(data.get("data", [])) > 0
+        print(f"🔍 Клиент {'найден' if exists else 'не найден'} в CRM ({phone})")
+        return exists
     except Exception as e:
-        print(f"❌ Ошибка get_customer_id_by_phone: {e}")
-        return None
-
-
-def get_orders_by_customer_id(customer_id: str):
-    """Тянем заказы по clientId"""
-    query = {
-        "query": f"""
-        query {{
-          ordersFetcher(filters: {{ customerIds: ["{customer_id}"] }}) {{
-            orders {{
-              id
-              statusId
-            }}
-          }}
-        }}
-        """
-    }
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": SALESRENDER_API_KEY
-    }
-    try:
-        resp = requests.post(SALESRENDER_BASE_URL, headers=headers, json=query, timeout=10)
-        resp.raise_for_status()
-        return resp.json().get("data", {}).get("ordersFetcher", {}).get("orders", [])
-    except Exception as e:
-        print(f"❌ Ошибка get_orders_by_customer_id: {e}")
-        return []
-
-
-def needs_new_order(phone: str) -> bool:
-    """
-    Правила:
-    - Если есть заказ со statusId == 1 → НЕ создаём.
-    - Если есть заказы со статусами 3, 4, 8, 10, 11 → создаём.
-    - Если заказов нет → создаём.
-    """
-    cust_id = get_customer_id_by_phone(phone)
-    if not cust_id:
-        print(f"ℹ️ Клиент с телефоном {phone} не найден → создаём заказ")
-        return True
-
-    orders = get_orders_by_customer_id(cust_id)
-    print(f"📋 Заказы клиента {cust_id}: {orders}")
-
-    if any(int(o.get("statusId", 0)) == 1 for o in orders):
-        print("⛔ Есть заказ в статусе 1 → новый заказ НЕ создаём")
+        print(f"❌ Ошибка проверки клиента: {e}")
         return False
-
-    if any(int(o.get("statusId", 0)) in [3, 4, 8, 10, 11] for o in orders):
-        print("✅ Есть заказы в статусах 3/4/8/10/11 → создаём новый заказ")
-        return True
-
-    print("ℹ️ Другие заказы не мешают → создаём новый заказ")
-    return True
-
-# --- СТАРЫЕ ФУНКЦИИ ---
 
 def create_order(full_name, phone):
     """Создаёт заказ в SalesRender"""
@@ -131,8 +75,6 @@ def create_order(full_name, phone):
         print(f"❌ Ошибка создания заказа: {e}")
         return None
 
-# --- WEBHOOK ---
-
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
@@ -150,11 +92,13 @@ def webhook():
         phone = None
         name = "Клиент"
 
+        # Берём номер телефона
         if messages:
             phone = messages[0].get("from")
         elif contacts:
             phone = contacts[0].get("wa_id")
 
+        # Берём имя
         if contacts and "profile" in contacts[0]:
             name = contacts[0]["profile"].get("name", "Клиент")
 
@@ -162,11 +106,12 @@ def webhook():
             print("❌ Не удалось определить номер телефона")
             return jsonify({"status": "no phone"}), 200
 
-        # 🔍 Проверка — нужно ли создавать заказ
-        if not needs_new_order(phone):
-            return jsonify({"status": "order in progress"}), 200
+        # Проверка — есть ли клиент в CRM
+        if client_exists(phone):
+            print(f"⚠️ Клиент {phone} уже есть в CRM — заказ не создаём")
+            return jsonify({"status": "client exists"}), 200
 
-        # ✅ Создаём заказ
+        # Создаём заказ в CRM
         order_id = create_order(name, phone)
         if not order_id:
             return jsonify({"status": "error creating order"}), 500
