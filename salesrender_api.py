@@ -170,7 +170,7 @@ def create_order(full_name, phone):
 
     headers = {
         "Content-Type": "application/json",
-        "Authorization": SALESRENDER_API_KEY
+        "Authorization": SALESRENDER_TOKEN
     }
 
     variables = {
