@@ -18,57 +18,64 @@ def normalize_phone_for_crm(phone: str) -> str:
         return "+7" + phone
     return phone
 
-def client_exists(phone: str):
+def client_exists(phone):
     """
-    Ищем клиента в CRM по номеру.
-    Возвращает словарь с последним заказом или None.
+    Проверяет клиента по телефону.
+    Возвращает словарь:
+    {
+        "has_active": bool,
+        "last_order": dict | None
+    }
     """
-    try:
-        norm_phone = normalize_phone_for_crm(phone)
-        query = """
-        query($phone: String!) {
-          orderFind(query: $phone) {
-            id
-            createdAt
-            status {
-              id
-              name
-            }
-          }
-        }
+    headers = {
+        "Authorization": SALESRENDER_TOKEN,
+        "Content-Type": "application/json"
+    }
+
+    query = {
+        "query": f"""
+        query {{
+            ordersFetcher(
+                filters: {{ include: {{ phones: ["{phone}"] }} }}
+                limit: 5
+                sort: {{ field: "id", order: DESC }}
+            ) {{
+                orders {{
+                    id
+                    status {{ name }}
+                    data {{
+                        phoneFields {{ value {{ raw }} }}
+                    }}
+                }}
+            }}
+        }}
         """
-        variables = {"phone": f"{{\"phone\":\"{norm_phone}\"}}"}
+    }
 
-        response = requests.post(
-            CRM_API_URL,
-            json={"query": query, "variables": variables},
-            headers={"Authorization": f"Bearer {CRM_API_TOKEN}"}
-        )
-
-        if response.status_code != 200:
-            print(f"❌ Ошибка CRM запроса: {response.status_code} {response.text}")
-            return None
-
-        data = response.json()
-        orders = data.get("data", {}).get("orderFind", [])
+    try:
+        resp = requests.post(SALESRENDER_URL, headers=headers, json=query, timeout=10)
+        resp.raise_for_status()
+        orders = resp.json().get("data", {}).get("ordersFetcher", {}).get("orders", [])
 
         if not orders:
             print(f"ℹ️ Для {phone} заказов не найдено")
-            return None
+            return {"has_active": False, "last_order": None}
 
-        # сортируем по createdAt (берём последний заказ)
-        last_order = sorted(orders, key=lambda x: x.get("createdAt", ""), reverse=True)[0]
+        last_order = orders[0]
+        last_status = (last_order.get("status") or {}).get("name", "").strip().lower()
 
-        return {
-            "id": last_order.get("id"),
-            "status": last_order.get("status")
-        }
+        allowed_statuses = {"спам/тест", "отменен", "недозвон 5 дней", "недозвон", "перезвонить"}
+
+        if last_status in allowed_statuses:
+            print(f"✅ Последний заказ {last_order['id']} в статусе '{last_status}' → можно создать новый")
+            return {"has_active": False, "last_order": last_order}
+        else:
+            print(f"⏳ У клиента есть активный заказ {last_order['id']} со статусом '{last_status}'")
+            return {"has_active": True, "last_order": last_order}
 
     except Exception as e:
-        print(f"❌ Ошибка при запросе CRM: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
+        print(f"❌ Ошибка client_exists: {e}")
+        return {"has_active": False, "last_order": None}
 
 
 def create_order(full_name, phone):
