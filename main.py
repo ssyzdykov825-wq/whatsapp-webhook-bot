@@ -534,16 +534,18 @@ def webhook():
         print(f"STEP 2: client_in_bot_db={client_in_bot_db}")
         should_send_bot_reply = False
 
-        allowed_statuses = {"Спам/Тест", "Отменен", "Недозвон 5 дней", "Недозвон", "Перезвонить"}
+        # разрешённые статусы (приведём к нижнему регистру)
+        allowed_statuses = {"спам/тест", "отменен", "недозвон 5 дней", "недозвон", "перезвонить"}
 
-        crm_info = client_exists(user_phone)  # ⚠️ теперь нужно возвращать словарь {"id": ..., "status": ...} или None
+        crm_info = client_exists(user_phone)  # ⚠️ возвращает словарь {"id": ..., "status": {"name": ...}} или None
         print(f"STEP 3: client_exists вернул: {crm_info}")
 
         if crm_info:
-            crm_status = crm_info.get("status", "")
-            print(f"STEP 4: Найден в CRM со статусом '{crm_status}'")
+            crm_status = (crm_info.get("status") or {}).get("name", "")
+            crm_status_normalized = crm_status.strip().lower()
+            print(f"STEP 4: Найден в CRM со статусом '{crm_status}' (нормализовано: '{crm_status_normalized}')")
 
-            if crm_status in allowed_statuses:
+            if crm_status_normalized in allowed_statuses:
                 print(f"STEP 5: Статус '{crm_status}' разрешён → создаём заказ")
                 try:
                     order_id = process_new_lead(name, user_phone)
