@@ -529,10 +529,19 @@ def webhook():
 
         print(f"STEP 1: user_phone={user_phone}, name={name}")
 
-        # --- Проверка внутренней БД ---
+        # --- Проверка клиента и создание заказа ---
         client_in_bot_db = client_in_db_or_cache(user_phone)
         print(f"STEP 2: client_in_bot_db={client_in_bot_db}")
         should_send_bot_reply = False
+
+        try:
+            print(f"📩 Вызываем process_new_lead для {user_phone}, имя: {name}")
+            order_id = process_new_lead(name, user_phone)
+            print(f"📦 process_new_lead вернул: {order_id}")
+        except Exception as e:
+            print(f"❌ Ошибка при создании заказа: {e}")
+            import traceback
+            traceback.print_exc()
 
         if client_in_bot_db:
             print("STEP 3: Найден в БД бота → should_send_bot_reply = True")
@@ -541,19 +550,11 @@ def webhook():
             crm_already_exists = client_exists(user_phone)
             print(f"STEP 4: client_exists вернул: {crm_already_exists}")
             if crm_already_exists:
-                print("STEP 5: Найден в CRM → сохраняем и ставим should_send_bot_reply = True")
+                print("STEP 5: Найден в CRM → сохраняем в БД бота")
                 save_client_state(user_phone, name=name, in_crm=True)
                 should_send_bot_reply = True
             else:
-                print("STEP 6: Новый клиент, вызываем process_new_lead")
-                try:
-                    print("📩 Получен новый лид:", name, user_phone)
-                    order_id = process_new_lead(name, user_phone)
-                    print("📦 process_new_lead вернул:", order_id)
-                except Exception as e:
-                    print(f"❌ Ошибка при создании лида: {e}")
-                    import traceback
-                    traceback.print_exc()
+                print("STEP 6: Новый клиент, заказ уже создан process_new_lead")
                 should_send_bot_reply = False
 
         # --- Отправка ответа только для известных клиентов ---
