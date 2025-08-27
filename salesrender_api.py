@@ -18,19 +18,17 @@ def get_client(phone):
         data = resp.json()
         clients = data.get("data", [])
         if clients:
-            return clients[0]  # первый совпавший клиент
+            return clients[0]  # первый найденный клиент
         return None
     except Exception as e:
         print(f"❌ Ошибка получения клиента: {e}")
         return None
 
 def should_resend_lead(client):
-    """Проверяем, нужно ли повторно отправлять лид"""
-    resend_statuses = ["отклонен", "не в обработке"]
+    """Создаём заказ только если статус != 1"""
     if not client:
-        return True  # клиент новый — отправляем
-    status = client.get("status", "").lower()
-    return status in resend_statuses
+        return True  # клиента нет в CRM — создаём
+    return client.get("statusId") != 1
 
 def client_exists(phone):
     """Старая функция для совместимости со старым кодом"""
@@ -40,7 +38,7 @@ def client_exists(phone):
     return exists
 
 def create_order(full_name, phone):
-    """Создаёт заказ в SalesRender"""
+    """Создаёт заказ в SalesRender с statusId=1"""
     mutation = """
     mutation($firstName: String!, $lastName: String!, $phone: String!) {
       orderMutation {
@@ -85,6 +83,9 @@ from salesrender_api import create_order, get_client, should_resend_lead
 
 app = Flask(__name__)
 
+# Пример базы бота
+bot_database = {}
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
@@ -116,19 +117,23 @@ def webhook():
             print("❌ Не удалось определить номер телефона")
             return jsonify({"status": "no phone"}), 200
 
-        # Получаем клиента из CRM
-        client = get_client(phone)
+        # --- База бота ---
+        if phone in bot_database:
+            print(f"DEBUG: Клиент {phone} найден в БД бота. Продолжаем диалог.")
+        else:
+            bot_database[phone] = {"name": name}
+            print(f"DEBUG: Новый клиент {phone} добавлен в БД бота.")
 
-        # Проверяем, нужно ли повторно отправлять
+        # --- Проверка CRM ---
+        client = get_client(phone)
         if should_resend_lead(client):
             order_id = create_order(name, phone)
             if order_id:
-                print(f"✅ Заказ {order_id} создан ({name}, {phone})")
+                print(f"✅ Заказ {order_id} создан для {name} ({phone})")
             else:
                 return jsonify({"status": "error creating order"}), 500
         else:
-            print(f"⚠️ Клиент {phone} уже есть в CRM с активным статусом — заказ не создаём")
-            return jsonify({"status": "client exists, active"}), 200
+            print(f"⚠️ Клиент {phone} уже в обработке (statusId=1) — заказ не создаём")
 
     except Exception as e:
         print(f"❌ Ошибка в webhook: {e}")
