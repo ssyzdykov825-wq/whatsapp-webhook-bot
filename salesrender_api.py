@@ -1,5 +1,4 @@
 import requests
-import traceback
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
@@ -8,57 +7,26 @@ app = Flask(__name__)
 SALESRENDER_BASE_URL = "https://de.backend.salesrender.com/companies/1123/CRM"
 SALESRENDER_API_KEY = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXNyZW5kZXIuY29tLyIsImF1ZCI6IkNSTSIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc"
 
-def get_lead_status(phone):
-    """
-    Ищет лид по номеру телефона, используя REST API, и возвращает его ID и статус.
-    Если лид не найден, возвращает None.
-    """
-    print(f"✅ Начинаем поиск клиента с номером: {phone} через REST API")
+def client_exists(phone):
+    """Проверяет, есть ли клиент с таким телефоном в SalesRender"""
     url = f"{SALESRENDER_BASE_URL}/clients?search={phone}"
     headers = {
         "Authorization": SALESRENDER_API_KEY,
         "Content-Type": "application/json"
     }
-    
     try:
         resp = requests.get(url, headers=headers, timeout=10)
         resp.raise_for_status()
         data = resp.json()
-        
-        clients = data.get("data", [])
-        if not clients:
-            print(f"🔍 Клиент не найден в CRM ({phone})")
-            return None
-
-        client_id = clients[0].get("id")
-        print(f"🔍 Клиент найден, ID клиента: {client_id}")
-
-        # Теперь ищем последние заказы этого клиента
-        orders_url = f"{SALESRENDER_BASE_URL}/orders?filter[client_id]={client_id}&sort=created_at&order=desc"
-        orders_resp = requests.get(orders_url, headers=headers, timeout=10)
-        orders_resp.raise_for_status()
-        orders_data = orders_resp.json()
-        
-        orders = orders_data.get("data", [])
-        if orders:
-            latest_order = orders[0]
-            status_id = latest_order.get("status_id")
-            print(f"🔍 Найден последний лид, ID: {latest_order.get('id')}, статус: {status_id}")
-            return {'id': latest_order.get('id'), 'statusId': status_id}
-        else:
-            print(f"🔍 У найденного клиента нет лидов.")
-            return None
-            
+        exists = len(data.get("data", [])) > 0
+        print(f"🔍 Клиент {'найден' if exists else 'не найден'} в CRM ({phone})")
+        return exists
     except Exception as e:
-        print(f"❌ Ошибка при поиске клиента или его лидов: {e}")
-        traceback.print_exc()
-        return None
+        print(f"❌ Ошибка проверки клиента: {e}")
+        return False
 
 def create_order(full_name, phone):
-    """
-    Создаёт заказ в SalesRender
-    """
-    print(f"⏳ Попытка создания заказа для: {full_name}, {phone}")
+    """Создаёт заказ в SalesRender"""
     mutation = """
     mutation($firstName: String!, $lastName: String!, $phone: String!) {
       orderMutation {
@@ -99,17 +67,12 @@ def create_order(full_name, phone):
     try:
         response = requests.post(SALESRENDER_BASE_URL, json={"query": mutation, "variables": variables}, headers=headers)
         data = response.json()
-        print("📦 Полный ответ API при попытке создания заказа:", data)
+        print("📦 Ответ создания заказа:", data)
         if "errors" in data:
-            print(f"❌ Ошибка создания заказа: {data['errors']}")
             return None
-        
-        order_id = data["data"]["orderMutation"]["addOrder"]["id"]
-        print(f"✅ Заказ {order_id} успешно создан ({full_name}, {phone})")
-        return order_id
+        return data["data"]["orderMutation"]["addOrder"]["id"]
     except Exception as e:
         print(f"❌ Ошибка создания заказа: {e}")
-        traceback.print_exc()
         return None
 
 @app.route('/webhook', methods=['POST'])
@@ -129,11 +92,13 @@ def webhook():
         phone = None
         name = "Клиент"
 
+        # Берём номер телефона
         if messages:
             phone = messages[0].get("from")
         elif contacts:
             phone = contacts[0].get("wa_id")
 
+        # Берём имя
         if contacts and "profile" in contacts[0]:
             name = contacts[0]["profile"].get("name", "Клиент")
 
@@ -141,33 +106,26 @@ def webhook():
             print("❌ Не удалось определить номер телефона")
             return jsonify({"status": "no phone"}), 200
 
-        print(f"🔎 Обрабатываем сообщение от {name} с номером {phone}")
-        existing_lead = get_lead_status(phone)
+        # Проверка — есть ли клиент в CRM
+        if client_exists(phone):
+            print(f"⚠️ Клиент {phone} уже есть в CRM — заказ не создаём")
+            return jsonify({"status": "client exists"}), 200
 
-        if existing_lead:
-            print(f"➡️ Клиент найден в CRM. Проверяем его статус: {existing_lead['statusId']}")
-            if existing_lead['statusId'] != 1:
-                print(f"⚠️ Его лид в обработке (статус {existing_lead['statusId']}). Создаем новый.")
-                order_id = create_order(name, phone)
-                if not order_id:
-                    print(f"❌ Не удалось создать новый заказ.")
-                    return jsonify({"status": "error creating order"}), 500
-            else:
-                print(f"➡️ Его лид не в обработке (статус {existing_lead['statusId']}). Повторная отправка не требуется.")
-                return jsonify({"status": "client exists and not in processing"}), 200
-        else:
-            print(f"➡️ Клиент не найден в CRM. Создаем новый лид.")
-            order_id = create_order(name, phone)
-            if not order_id:
-                print(f"❌ Не удалось создать новый заказ.")
-                return jsonify({"status": "error creating order"}), 500
+        # Создаём заказ в CRM
+        order_id = create_order(name, phone)
+        if not order_id:
+            return jsonify({"status": "error creating order"}), 500
+
+        print(f"✅ Заказ {order_id} создан ({name}, {phone})")
 
     except Exception as e:
-        print(f"❌ Общая ошибка в webhook: {e}")
+        print(f"❌ Ошибка в webhook: {e}")
+        import traceback
         traceback.print_exc()
         return jsonify({"status": "error"}), 500
 
     return jsonify({"status": "ok"}), 200
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
