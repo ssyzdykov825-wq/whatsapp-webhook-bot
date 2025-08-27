@@ -7,64 +7,67 @@ app = Flask(__name__)
 SALESRENDER_BASE_URL = "https://de.backend.salesrender.com/companies/1123/CRM"
 SALESRENDER_API_KEY = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXNyZW5kZXIuY29tLyIsImF1ZCI6IkNSTSIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc"
 
-def client_exists(phone):
+def client_exists(phone: str):
     """
-    Проверяет клиента по телефону.
-    Возвращает dict:
-      {
-        "has_active": bool,
-        "last_order": {...} или None
-      }
+    Проверка существования клиента в CRM по телефону.
+    Возвращает словарь:
+    {
+        "id": ...,
+        "status": {"name": ...},
+        "raw_phone": ...
+    }
+    или None
     """
-    headers = {
-        "Authorization": SALESRENDER_API_KEY,
-        "Content-Type": "application/json"
-    }
 
-    query = {
-        "query": f"""
-        query {{
-            ordersFetcher(
-                filters: {{ include: {{ phones: ["{phone}"] }} }}
-                limit: 10
-                sort: {{ field: "id", order: DESC }}
-            ) {{
-                orders {{
-                    id
-                    status {{ name }}
-                    data {{
-                        phoneFields {{ value {{ raw }} }}
-                    }}
-                }}
-            }}
-        }}
-        """
-    }
+    # нормализуем
+    clean_phone = phone.lstrip("+")
+    phone_variants = [phone, clean_phone]
 
-    try:
-        resp = requests.post(SALESRENDER_BASE_URL, headers=headers, json=query, timeout=10)
-        resp.raise_for_status()
-        orders = resp.json().get("data", {}).get("ordersFetcher", {}).get("orders", [])
+    for variant in phone_variants:
+        query = {
+            "query": """
+            query($phone: [String!]) {
+              ordersFetcher(
+                filters: { include: { phones: $phone } }
+                limit: 1
+                sort: { field: "id", order: DESC }
+              ) {
+                orders {
+                  id
+                  status { name }
+                  data {
+                    phoneFields { value { raw } }
+                  }
+                }
+              }
+            }
+            """,
+            "variables": {"phone": [variant]}
+        }
 
-        if not orders:
-            print(f"ℹ️ Для {phone} заказов не найдено")
-            return {"has_active": False, "last_order": None}
+        try:
+            resp = requests.post(
+                CRM_API_URL,
+                headers={"Authorization": f"Bearer {CRM_TOKEN}"},
+                json=query,
+                timeout=10
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            print(f"📦 Ответ CRM для {variant}:", json.dumps(data, ensure_ascii=False, indent=2))
 
-        # последний заказ
-        last_order = orders[0]
-        status = (last_order.get("status") or {}).get("name", "").strip().lower()
-        allowed_statuses = {"спам/тест", "отменен", "недозвон 5 дней", "недозвон", "перезвонить"}
+            orders = (
+                data.get("data", {})
+                    .get("ordersFetcher", {})
+                    .get("orders", [])
+            )
+            if orders:
+                return orders[0]
 
-        if status not in allowed_statuses:
-            print(f"🔍 Найден активный заказ {last_order['id']} для {phone} со статусом {status}")
-            return {"has_active": True, "last_order": last_order}
-        else:
-            print(f"ℹ️ Последний заказ {last_order['id']} для {phone} в разрешённом статусе {status}")
-            return {"has_active": False, "last_order": last_order}
+        except Exception as e:
+            print(f"❌ Ошибка при запросе CRM: {e}")
 
-    except Exception as e:
-        print(f"❌ Ошибка client_exists: {e}")
-        return {"has_active": False, "last_order": None}
+    return None
 
 
 def create_order(full_name, phone):
