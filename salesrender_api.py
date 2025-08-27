@@ -4,27 +4,46 @@ from flask import Flask, request, jsonify
 app = Flask(__name__)
 
 # Настройки SalesRender
-SALESRENDER_BASE_URL = "https://de.backend.salesrender.com/companies/1123/CRM"
+SALESRENDER_URL = "https://de.backend.salesrender.com/companies/1123/CRM"
 SALESRENDER_API_KEY = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXNyZW5kZXIuY29tLyIsImF1ZCI6IkNSTSIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc"
 
-def client_exists(phone):
-    """Проверяет, есть ли клиент с таким телефоном в SalesRender"""
-    url = f"{SALESRENDER_BASE_URL}/clients?search={phone}"
+# ==========================
+# Получение заказов по телефону
+# ==========================
+def get_orders_by_phone(phone):
+    """Возвращает список заказов по номеру телефона"""
+    query = """
+    query($phone: String!) {
+      ordersFetcher(filters: { phone: $phone }) {
+        orders {
+          id
+          statusId
+        }
+      }
+    }
+    """
     headers = {
-        "Authorization": SALESRENDER_API_KEY,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "Authorization": SALESRENDER_API_KEY
     }
     try:
-        resp = requests.get(url, headers=headers, timeout=10)
+        resp = requests.post(
+            SALESRENDER_URL,
+            json={"query": query, "variables": {"phone": phone}},
+            headers=headers,
+            timeout=10
+        )
         resp.raise_for_status()
         data = resp.json()
-        exists = len(data.get("data", [])) > 0
-        print(f"🔍 Клиент {'найден' if exists else 'не найден'} в CRM ({phone})")
-        return exists
+        print("📦 Ответ CRM (ordersFetcher):", data)
+        return data.get("data", {}).get("ordersFetcher", {}).get("orders", [])
     except Exception as e:
-        print(f"❌ Ошибка проверки клиента: {e}")
-        return False
+        print(f"❌ Ошибка получения заказов по телефону {phone}: {e}")
+        return []
 
+# ==========================
+# Создание заказа
+# ==========================
 def create_order(full_name, phone):
     """Создаёт заказ в SalesRender"""
     mutation = """
@@ -58,15 +77,11 @@ def create_order(full_name, phone):
         "Authorization": SALESRENDER_API_KEY
     }
 
-    variables = {
-        "firstName": first_name,
-        "lastName": last_name,
-        "phone": phone
-    }
+    variables = {"firstName": first_name, "lastName": last_name, "phone": phone}
 
     try:
-        response = requests.post(SALESRENDER_BASE_URL, json={"query": mutation, "variables": variables}, headers=headers)
-        data = response.json()
+        resp = requests.post(SALESRENDER_URL, json={"query": mutation, "variables": variables}, headers=headers)
+        data = resp.json()
         print("📦 Ответ создания заказа:", data)
         if "errors" in data:
             return None
@@ -75,6 +90,9 @@ def create_order(full_name, phone):
         print(f"❌ Ошибка создания заказа: {e}")
         return None
 
+# ==========================
+# Webhook
+# ==========================
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
@@ -106,17 +124,29 @@ def webhook():
             print("❌ Не удалось определить номер телефона")
             return jsonify({"status": "no phone"}), 200
 
-        # Проверка — есть ли клиент в CRM
-        if client_exists(phone):
-            print(f"⚠️ Клиент {phone} уже есть в CRM — заказ не создаём")
-            return jsonify({"status": "client exists"}), 200
+        # Проверяем заказы по телефону
+        orders = get_orders_by_phone(phone)
+        create_new = True
 
-        # Создаём заказ в CRM
-        order_id = create_order(name, phone)
-        if not order_id:
-            return jsonify({"status": "error creating order"}), 500
+        if orders:
+            for o in orders:
+                sid = o.get("statusId")
+                print(f"🔎 Найден заказ {o['id']} со статусом {sid}")
+                if sid == 1:
+                    create_new = False
+                    break
+                if sid in [3, 4, 8, 10, 11]:
+                    create_new = True
+                    break
 
-        print(f"✅ Заказ {order_id} создан ({name}, {phone})")
+        if create_new:
+            order_id = create_order(name, phone)
+            if not order_id:
+                return jsonify({"status": "error creating order"}), 500
+            print(f"✅ Заказ {order_id} создан ({name}, {phone})")
+        else:
+            print(f"⚠️ Новый заказ не нужен для {phone}")
+            return jsonify({"status": "order exists"}), 200
 
     except Exception as e:
         print(f"❌ Ошибка в webhook: {e}")
