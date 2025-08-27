@@ -1,37 +1,13 @@
 import requests
-from flask import Flask, request, jsonify
-import traceback
 import json
+import traceback
 
-app = Flask(__name__)
-
-# Настройки SalesRender
+# --- Настройки SalesRender ---
+# !!! ВНИМАНИЕ: ЗАМЕНИТЕ ЭТИ ДАННЫЕ НА СВОИ АКТУАЛЬНЫЕ !!!
 SALESRENDER_BASE_URL = "https://de.backend.salesrender.com/companies/1123/CRM"
 SALESRENDER_API_KEY = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZWRlbnJkZXIuY29tLyIsImF1ZCI6IkNSTSIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc"
 
-# --- Внутренняя база данных (заглушка) ---
-IN_MEMORY_DB = {}
-
-def normalize_phone_number(phone):
-    """Простая функция нормализации номера телефона."""
-    return ''.join(filter(str.isdigit, phone))
-
-def client_in_db_or_cache(phone):
-    """
-    Проверяет, есть ли клиент во внутренней базе данных/кэше.
-    """
-    print(f"DEBUG: Проверка клиента {phone} во внутренней базе.")
-    return phone in IN_MEMORY_DB
-
-def save_client_state(phone, name, in_crm):
-    """
-    Сохраняет состояние клиента во внутренней базе данных.
-    """
-    IN_MEMORY_DB[phone] = {
-        "name": name,
-        "in_crm": in_crm
-    }
-    print(f"DEBUG: Состояние клиента {name} ({phone}) сохранено в IN_MEMORY_DB: in_crm={in_crm}")
+# --- Реальные функции API ---
 
 def find_client(phone):
     """
@@ -48,10 +24,7 @@ def find_client(phone):
         resp.raise_for_status()
         data = resp.json()
         clients = data.get("data", [])
-        if clients:
-            return clients[0]
-        else:
-            return None
+        return clients[0] if clients else None
     except Exception as e:
         print(f"❌ Ошибка проверки клиента: {e}")
         traceback.print_exc()
@@ -62,17 +35,24 @@ def is_lead_active(client_data):
     Проверяет, находится ли лид в обработке, по его ID статуса.
     """
     active_status_id = 1
-    
     status_id = client_data.get("statusId")
-    if status_id == active_status_id:
-        print(f"⚠️ Лид со статусом ID '{status_id}' уже в обработке.")
+    return status_id == active_status_id
+
+def client_exists(phone):
+    """
+    Проверяет, существует ли клиент в CRM. Эта функция нужна для импорта в main.py
+    и является оберткой над find_client.
+    """
+    client = find_client(phone)
+    if client:
+        print(f"🔍 Клиент {phone} найден в CRM.")
         return True
     else:
-        print(f"✅ Лид со статусом ID '{status_id}' не в обработке. Можно создавать новый заказ.")
+        print(f"🔍 Клиент {phone} не найден в CRM.")
         return False
 
 def create_order(full_name, phone):
-    """Создаёт заказ в SalesRender"""
+    """Создаёт заказ в SalesRender."""
     mutation = """
     mutation($firstName: String!, $lastName: String!, $phone: String!) {
       orderMutation {
@@ -113,12 +93,43 @@ def create_order(full_name, phone):
     try:
         response = requests.post(SALESRENDER_BASE_URL, json={"query": mutation, "variables": variables}, headers=headers)
         data = response.json()
-        print("📦 Ответ создания заказа:", data)
         if "errors" in data:
+            print(f"❌ GraphQL ошибка при создании заказа: {data['errors']}")
             return None
         return data["data"]["orderMutation"]["addOrder"]["id"]
     except Exception as e:
         print(f"❌ Ошибка создания заказа: {e}")
+        traceback.print_exc()
+        return None
+
+def fetch_order_from_crm(order_id):
+    """Извлекает детали заказа из SalesRender CRM с помощью GraphQL."""
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": SALESRENDER_API_KEY
+    }
+    query = {
+        "query": f"""
+        query {{
+            ordersFetcher(filters: {{ include: {{ ids: ["{order_id}"] }} }}) {{
+                orders {{
+                    id
+                    data {{
+                        humanNameFields {{ value {{ firstName lastName }} }}
+                        phoneFields {{ value {{ international raw national }} }}
+                    }}
+                }}
+            }}
+        }}
+        """
+    }
+    try:
+        response = requests.post(SALESRENDER_BASE_URL, headers=headers, json=query, timeout=10)
+        response.raise_for_status()
+        data = response.json().get("data", {}).get("ordersFetcher", {}).get("orders", [])
+        return data[0] if data else None
+    except Exception as e:
+        print(f"❌ Ошибка получения из CRM: {e}")
         traceback.print_exc()
         return None
 
