@@ -18,8 +18,8 @@ from state_manager import (
     MAX_HISTORY_FOR_GPT
 )
 
-# ✨ ИМПОРТИРУЕМ ВАШИ РЕАЛЬНЫЕ ФУНКЦИИ SALESRENDER API - ПРЕДПОЛАГАЕТСЯ, ЧТО ОНИ РАБОТАЮТ КОРРЕКТНО ✨
-from salesrender_api import create_order, client_exists
+# ✨ ИМПОРТИРУЕМ ВАШИ РЕАЛЬНЫЕ ФУНКЦИИ SALESRENDER API ✨
+from salesrender_api import create_order, client_exists, find_client, is_lead_active
 
 
 # ==============================
