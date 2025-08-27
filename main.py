@@ -19,7 +19,7 @@ from state_manager import (
 )
 
 # ✨ ИМПОРТИРУЕМ ВАШИ РЕАЛЬНЫЕ ФУНКЦИИ SALESRENDER API - ПРЕДПОЛАГАЕТСЯ, ЧТО ОНИ РАБОТАЮТ КОРРЕКТНО ✨
-from salesrender_api import process_new_lead
+from salesrender_api import create_order, client_exists
 
 
 # ==============================
