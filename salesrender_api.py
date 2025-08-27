@@ -131,46 +131,36 @@ def create_order(full_name, phone):
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
-    print("📩 Получены данные от 360dialog:", data)
+    print("📩 Входящий JSON:", data)
 
-    try:
-        entry = data.get("entry", [])
-        if not entry:
-            return jsonify({"status": "no entry"}), 200
+    entry = data.get("entry", [])[0]
+    changes = entry.get("changes", [])[0]
+    value = changes.get("value", {})
+    messages = value.get("messages", [])
 
-        value = entry[0].get("changes", [])[0].get("value", {})
-        messages = value.get("messages", [])
-        contacts = value.get("contacts", [])
+    if not messages:
+        return jsonify({"status": "no messages"}), 200
 
-        phone = None
-        name = "Клиент"
+    msg = messages[0]
+    phone = msg.get("from")
+    contact = value.get("contacts", [{}])[0]
+    name = contact.get("profile", {}).get("name", "Неизвестный")
 
-        # Берём номер телефона
-        if messages:
-            phone = messages[0].get("from")
-        elif contacts:
-            phone = contacts[0].get("wa_id")
+    text = msg.get("text", {}).get("body", "")
+    print(f"DEBUG: Обрабатываем сообщение от {phone}, текст: {text}")
 
-        # Берём имя
-        if contacts and "profile" in contacts[0]:
-            name = contacts[0]["profile"].get("name", "Клиент")
+    # ❌ раньше было так:
+    # order_id = create_order(name, phone)
 
-        if not phone:
-            print("❌ Не удалось определить номер телефона")
-            return jsonify({"status": "no phone"}), 200
+    # ✅ теперь через нашу логику
+    order_id = process_new_lead(name, phone)
 
-        # Используем твою функцию process_new_lead
-        order_id = process_new_lead(name, phone)
-
-        if order_id:
-            print(f"✅ Заказ {order_id} создан ({name}, {phone})")
-        else:
-            print(f"ℹ️ Новый заказ НЕ был создан для {phone}")
-
-    except Exception as e:
-        print(f"❌ Ошибка в webhook: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"status": "error"}), 500
+    if order_id:
+        print(f"🎉 Заказ {order_id} успешно создан")
+    else:
+        print("⏳ Новый заказ не был создан")
 
     return jsonify({"status": "ok"}), 200
+
+if __name__ == "__main__": 
+    app.run(host="0.0.0.0", port=5000)
