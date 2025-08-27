@@ -57,7 +57,8 @@ def needs_new_order(phone: str) -> bool:
     """
     Правила:
     - Если есть заказ со statusId == 1 → НЕ создаём.
-    - Во всех остальных случаях → создаём.
+    - Если есть заказы со статусами 3, 4, 8, 10, 11 → создаём.
+    - Если заказов нет → создаём.
     """
     cust_id = get_customer_id_by_phone(phone)
     if not cust_id:
@@ -71,7 +72,11 @@ def needs_new_order(phone: str) -> bool:
         print("⛔ Есть заказ в статусе 1 → новый заказ НЕ создаём")
         return False
 
-    print("✅ Нет заказов в статусе 1 → создаём новый заказ")
+    if any(int(o.get("statusId", 0)) in [3, 4, 8, 10, 11] for o in orders):
+        print("✅ Есть заказы в статусах 3/4/8/10/11 → создаём новый заказ")
+        return True
+
+    print("ℹ️ Другие заказы не мешают → создаём новый заказ")
     return True
 
 # --- СТАРЫЕ ФУНКЦИИ ---
