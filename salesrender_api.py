@@ -10,53 +10,47 @@ SALESRENDER_API_KEY = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJod
 
 def get_lead_status(phone):
     """
-    Ищет лид по номеру телефона в SalesRender и возвращает его ID и статус.
+    Ищет лид по номеру телефона, используя REST API, и возвращает его ID и статус.
     Если лид не найден, возвращает None.
     """
-    print(f"✅ Начинаем поиск клиента с номером: {phone}")
-    query = """
-    query($phone: String!) {
-      orderSearch(filter: { humanFields: [{ field: "phone", value: $phone }] }) {
-        data {
-          id
-          statusId
-        }
-      }
-    }
-    """
+    print(f"✅ Начинаем поиск клиента с номером: {phone} через REST API")
+    url = f"{SALESRENDER_BASE_URL}/clients?search={phone}"
     headers = {
-        "Content-Type": "application/json",
-        "Authorization": SALESRENDER_API_KEY
+        "Authorization": SALESRENDER_API_KEY,
+        "Content-Type": "application/json"
     }
-    variables = {
-        "phone": phone
-    }
-
+    
     try:
-        resp = requests.post(
-            SALESRENDER_BASE_URL,
-            json={"query": query, "variables": variables},
-            headers=headers,
-            timeout=10
-        )
+        resp = requests.get(url, headers=headers, timeout=10)
         resp.raise_for_status()
         data = resp.json()
         
-        if "errors" in data:
-            print(f"❌ Ошибка GraphQL-запроса: {data['errors']}")
-            return None
-            
-        orders = data.get("data", {}).get("orderSearch", {}).get("data", [])
-        
-        if orders:
-            lead_info = orders[0]
-            print(f"🔍 Клиент найден. ID лида: {lead_info['id']}, текущий статус: {lead_info['statusId']}")
-            return lead_info
-        else:
+        clients = data.get("data", [])
+        if not clients:
             print(f"🔍 Клиент не найден в CRM ({phone})")
             return None
+
+        client_id = clients[0].get("id")
+        print(f"🔍 Клиент найден, ID клиента: {client_id}")
+
+        # Теперь ищем последние заказы этого клиента
+        orders_url = f"{SALESRENDER_BASE_URL}/orders?filter[client_id]={client_id}&sort=created_at&order=desc"
+        orders_resp = requests.get(orders_url, headers=headers, timeout=10)
+        orders_resp.raise_for_status()
+        orders_data = orders_resp.json()
+        
+        orders = orders_data.get("data", [])
+        if orders:
+            latest_order = orders[0]
+            status_id = latest_order.get("status_id")
+            print(f"🔍 Найден последний лид, ID: {latest_order.get('id')}, статус: {status_id}")
+            return {'id': latest_order.get('id'), 'statusId': status_id}
+        else:
+            print(f"🔍 У найденного клиента нет лидов.")
+            return None
+            
     except Exception as e:
-        print(f"❌ Ошибка при поиске клиента: {e}")
+        print(f"❌ Ошибка при поиске клиента или его лидов: {e}")
         traceback.print_exc()
         return None
 
@@ -105,7 +99,6 @@ def create_order(full_name, phone):
     try:
         response = requests.post(SALESRENDER_BASE_URL, json={"query": mutation, "variables": variables}, headers=headers)
         data = response.json()
-        # Добавляем логирование для ответа API
         print("📦 Полный ответ API при попытке создания заказа:", data)
         if "errors" in data:
             print(f"❌ Ошибка создания заказа: {data['errors']}")
