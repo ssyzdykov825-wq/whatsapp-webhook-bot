@@ -116,38 +116,32 @@ def fetch_order_from_crm(order_id):
 def process_new_lead(name, phone):
     """
     Регистрирует нового лида во внутренней БД бота и создает заказ в CRM, если это необходимо.
-
-    Новая логика:
-    - Если есть заказ со statusId == 1 → новый заказ НЕ создаем.
-    - Во всех остальных случаях → создаем новый заказ.
     """
-    # 1. Проверка в локальной базе (кэш)
+
+    # Проверка в базе/кэше
     if client_in_db_or_cache(phone):
-        print(f"⚠️ Клиент {phone} уже в базе/кэше (process_new_lead), пропускаем.")
+        print(f"⚠️ Клиент {phone} уже в базе/кэше (process_new_lead), пропускаем создание/обновление.")
         return None
 
     try:
-        # 2. Проверка в CRM — нужно ли создавать новый заказ
-        if not needs_new_order(phone):
-            print(f"⛔ Новый заказ для {phone} не нужен (есть активный в статусе 1).")
-            save_client_state(phone, name=name, in_crm=True)
-            return None
-
-        # 3. Создаём заказ
-        order_id = create_order(name, phone)
-        if order_id:
-            print(f"✅ Заказ {order_id} создан для {name}, {phone}.")
-            save_client_state(phone, name=name, in_crm=True)
-            return order_id
+        if needs_new_order(phone):
+            print(f"✅ Для клиента {phone} нужно создать заказ.")
+            order_id = create_order(name, phone)
+            if order_id:
+                print(f"✅ Заказ {order_id} создан для {name}, {phone}.")
+                save_client_state(phone, name=name, in_crm=True)
+                return order_id
+            else:
+                print(f"❌ Ошибка при создании заказа для {phone}.")
+                save_client_state(phone, name=name, in_crm=False)
+                return None
         else:
-            print(f"❌ Ошибка при создании заказа для {phone}")
-            save_client_state(phone, name=name, in_crm=False)
+            print(f"⛔ Для клиента {phone} новый заказ не требуется (statusId == 1).")
+            save_client_state(phone, name=name, in_crm=True)
             return None
 
     except Exception as e:
         print(f"❌ Ошибка в process_new_lead: {e}")
-        import traceback
-        traceback.print_exc()
         save_client_state(phone, name=name, in_crm=False)
         return None
 
