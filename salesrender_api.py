@@ -12,8 +12,6 @@ SALESRENDER_API_KEY = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJod
 app = Flask(__name__)
 
 # --- Внутренняя база данных (заглушка) ---
-# Для примера используем словарь в памяти.
-# В реальном приложении это должна быть настоящая база данных.
 IN_MEMORY_DB = {}
 
 def normalize_phone_number(phone):
