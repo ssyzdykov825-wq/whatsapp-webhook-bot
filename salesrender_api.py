@@ -18,6 +18,8 @@ def normalize_phone_for_crm(phone: str) -> str:
         return "+7" + phone
     return phone
 
+import requests
+
 def client_exists(phone):
     """
     Проверяет клиента по телефону.
@@ -76,6 +78,64 @@ def client_exists(phone):
     except Exception as e:
         print(f"❌ Ошибка client_exists: {e}")
         return {"has_active": False, "last_order": None}
+
+
+# ==============================
+# Создание заказа
+# ==============================
+def create_order(name, phone):
+    """
+    Создаёт новый заказ в SalesRender
+    """
+    headers = {
+        "Authorization": SALESRENDER_TOKEN,
+        "Content-Type": "application/json"
+    }
+
+    variables = {
+        "firstName": name,
+        "lastName": "",
+        "phone": phone
+    }
+
+    query = {
+        "query": """
+        mutation($firstName: String!, $lastName: String, $phone: String!) {
+            orderMutation {
+                addOrder(
+                    input: {
+                        customer: {
+                            name: { firstName: $firstName, lastName: $lastName }
+                            phone: { raw: $phone }
+                        }
+                    }
+                ) {
+                    id
+                }
+            }
+        }
+        """,
+        "variables": variables
+    }
+
+    try:
+        print(f"DEBUG: variables = {variables}")
+        resp = requests.post(SALESRENDER_URL, headers=headers, json=query, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        print(f"📦 Полный ответ CRM: {data}")
+
+        order_id = data.get("data", {}).get("orderMutation", {}).get("addOrder", {}).get("id")
+        if order_id:
+            print(f"✅ Заказ успешно создан, ID={order_id}")
+            return order_id
+        else:
+            print("❌ Не удалось получить ID заказа из ответа CRM")
+            return None
+
+    except Exception as e:
+        print(f"❌ Ошибка create_order: {e}")
+        return None
 
 
 def create_order(full_name, phone):
