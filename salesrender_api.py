@@ -12,8 +12,8 @@ def client_exists(phone):
     Проверяет клиента по телефону.
     Возвращает dict:
       {
-        "has_active": True/False,   # есть ли активный заказ
-        "last_order": {...}         # последний заказ по ID (для инфо)
+        "has_active": bool,
+        "last_order": {...} или None
       }
     """
     headers = {
@@ -50,16 +50,17 @@ def client_exists(phone):
             print(f"ℹ️ Для {phone} заказов не найдено")
             return {"has_active": False, "last_order": None}
 
-        allowed_statuses = {"Спам/Тест", "Отменен", "Недозвон 5 дней", "Недозвон", "Перезвонить"}
+        # последний заказ
+        last_order = orders[0]
+        status = (last_order.get("status") or {}).get("name", "").strip().lower()
+        allowed_statuses = {"спам/тест", "отменен", "недозвон 5 дней", "недозвон", "перезвонить"}
 
-        has_active = any(order["status"]["name"] not in allowed_statuses for order in orders)
-
-        print(f"🔍 Проверено {len(orders)} заказов для {phone}. Активный найден? {has_active}")
-
-        return {
-            "has_active": has_active,
-            "last_order": orders[0]
-        }
+        if status not in allowed_statuses:
+            print(f"🔍 Найден активный заказ {last_order['id']} для {phone} со статусом {status}")
+            return {"has_active": True, "last_order": last_order}
+        else:
+            print(f"ℹ️ Последний заказ {last_order['id']} для {phone} в разрешённом статусе {status}")
+            return {"has_active": False, "last_order": last_order}
 
     except Exception as e:
         print(f"❌ Ошибка client_exists: {e}")
