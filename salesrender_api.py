@@ -50,7 +50,7 @@ def get_lead_status(phone):
         
         if orders:
             lead_info = orders[0]
-            print(f"🔍 Клиент найден. ID лида: {lead_info['id']}, статус: {lead_info['statusId']}")
+            print(f"🔍 Клиент найден. ID лида: {lead_info['id']}, текущий статус: {lead_info['statusId']}")
             return lead_info
         else:
             print(f"🔍 Клиент не найден в CRM ({phone})")
@@ -105,13 +105,14 @@ def create_order(full_name, phone):
     try:
         response = requests.post(SALESRENDER_BASE_URL, json={"query": mutation, "variables": variables}, headers=headers)
         data = response.json()
-        print("📦 Ответ создания заказа:", data)
+        # Добавляем логирование для ответа API
+        print("📦 Полный ответ API при попытке создания заказа:", data)
         if "errors" in data:
             print(f"❌ Ошибка создания заказа: {data['errors']}")
             return None
         
         order_id = data["data"]["orderMutation"]["addOrder"]["id"]
-        print(f"✅ Заказ {order_id} создан ({full_name}, {phone})")
+        print(f"✅ Заказ {order_id} успешно создан ({full_name}, {phone})")
         return order_id
     except Exception as e:
         print(f"❌ Ошибка создания заказа: {e}")
@@ -150,11 +151,8 @@ def webhook():
         print(f"🔎 Обрабатываем сообщение от {name} с номером {phone}")
         existing_lead = get_lead_status(phone)
 
-        # Проверяем, существует ли лид и находится ли он в статусе "не в обработке"
         if existing_lead:
-            print(f"➡️ Клиент найден в CRM.")
-            # Если статус НЕ равен 1 (т.е. лид в обработке, закрыт и т.д.),
-            # тогда мы создаем новый лид.
+            print(f"➡️ Клиент найден в CRM. Проверяем его статус: {existing_lead['statusId']}")
             if existing_lead['statusId'] != 1:
                 print(f"⚠️ Его лид в обработке (статус {existing_lead['statusId']}). Создаем новый.")
                 order_id = create_order(name, phone)
@@ -162,11 +160,9 @@ def webhook():
                     print(f"❌ Не удалось создать новый заказ.")
                     return jsonify({"status": "error creating order"}), 500
             else:
-                # В противном случае (статус == 1), лид не создается повторно.
                 print(f"➡️ Его лид не в обработке (статус {existing_lead['statusId']}). Повторная отправка не требуется.")
                 return jsonify({"status": "client exists and not in processing"}), 200
         else:
-            # Если клиент не найден, создаем новый лид
             print(f"➡️ Клиент не найден в CRM. Создаем новый лид.")
             order_id = create_order(name, phone)
             if not order_id:
