@@ -18,6 +18,11 @@ def client_exists(phone):
         resp = requests.get(url, headers=headers, timeout=10)
         resp.raise_for_status()
         data = resp.json()
+
+        # 🔎 Подробный лог
+        import json
+        print("📩 Ответ CRM (client_exists):", json.dumps(data, indent=2, ensure_ascii=False))
+
         exists = len(data.get("data", [])) > 0
         print(f"🔍 Клиент {'найден' if exists else 'не найден'} в CRM ({phone})")
         return exists
