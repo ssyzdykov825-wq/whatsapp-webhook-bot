@@ -10,12 +10,11 @@ SALESRENDER_API_KEY = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJod
 def client_exists(phone):
     """
     Проверяет клиента по телефону.
-    Возвращает dict с данными последнего заказа:
-        {
-            "id": <int>,
-            "status": <str>
-        }
-    или None, если заказов нет.
+    Возвращает dict:
+      {
+        "has_active": True/False,   # есть ли активный заказ
+        "last_order": {...}         # последний заказ по ID (для инфо)
+      }
     """
     headers = {
         "Authorization": SALESRENDER_API_KEY,
@@ -27,12 +26,15 @@ def client_exists(phone):
         query {{
             ordersFetcher(
                 filters: {{ include: {{ phones: ["{phone}"] }} }}
-                limit: 1
+                limit: 10
                 sort: {{ field: "id", order: DESC }}
             ) {{
                 orders {{
                     id
                     status {{ name }}
+                    data {{
+                        phoneFields {{ value {{ raw }} }}
+                    }}
                 }}
             }}
         }}
@@ -44,24 +46,24 @@ def client_exists(phone):
         resp.raise_for_status()
         orders = resp.json().get("data", {}).get("ordersFetcher", {}).get("orders", [])
 
-        if orders:
-            last_order = orders[0]
-            order_id = last_order["id"]
-            status_name = (last_order.get("status") or {}).get("name", "").strip()
-            print(f"🔍 Найден последний заказ {order_id} для {phone} со статусом '{status_name}'")
-            return {
-                "id": order_id,
-                "status": status_name
-            }
-        else:
+        if not orders:
             print(f"ℹ️ Для {phone} заказов не найдено")
-            return None
+            return {"has_active": False, "last_order": None}
+
+        allowed_statuses = {"Спам/Тест", "Отменен", "Недозвон 5 дней", "Недозвон", "Перезвонить"}
+
+        has_active = any(order["status"]["name"] not in allowed_statuses for order in orders)
+
+        print(f"🔍 Проверено {len(orders)} заказов для {phone}. Активный найден? {has_active}")
+
+        return {
+            "has_active": has_active,
+            "last_order": orders[0]
+        }
 
     except Exception as e:
         print(f"❌ Ошибка client_exists: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
+        return {"has_active": False, "last_order": None}
 
 
 def create_order(full_name, phone):
