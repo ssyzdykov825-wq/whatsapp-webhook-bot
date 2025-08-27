@@ -7,67 +7,68 @@ app = Flask(__name__)
 SALESRENDER_BASE_URL = "https://de.backend.salesrender.com/companies/1123/CRM"
 SALESRENDER_API_KEY = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXNyZW5kZXIuY29tLyIsImF1ZCI6IkNSTSIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc"
 
+def normalize_phone_for_crm(phone: str) -> str:
+    """Приводим номер к виду +7xxxxxxxxxx"""
+    phone = phone.strip()
+    if phone.startswith("8") and len(phone) == 11:
+        return "+7" + phone[1:]
+    if phone.startswith("7") and len(phone) == 11:
+        return "+" + phone
+    if not phone.startswith("+") and len(phone) == 10:
+        return "+7" + phone
+    return phone
+
 def client_exists(phone: str):
     """
-    Проверка существования клиента в CRM по телефону.
-    Возвращает словарь:
-    {
-        "id": ...,
-        "status": {"name": ...},
-        "raw_phone": ...
-    }
-    или None
+    Ищем клиента в CRM по номеру.
+    Возвращает словарь с последним заказом или None.
     """
-
-    # нормализуем
-    clean_phone = phone.lstrip("+")
-    phone_variants = [phone, clean_phone]
-
-    for variant in phone_variants:
-        query = {
-            "query": """
-            query($phone: [String!]) {
-              ordersFetcher(
-                filters: { include: { phones: $phone } }
-                limit: 1
-                sort: { field: "id", order: DESC }
-              ) {
-                orders {
-                  id
-                  status { name }
-                  data {
-                    phoneFields { value { raw } }
-                  }
-                }
-              }
+    try:
+        norm_phone = normalize_phone_for_crm(phone)
+        query = """
+        query($phone: String!) {
+          orderFind(query: $phone) {
+            id
+            createdAt
+            status {
+              id
+              name
             }
-            """,
-            "variables": {"phone": [variant]}
+          }
+        }
+        """
+        variables = {"phone": f"{{\"phone\":\"{norm_phone}\"}}"}
+
+        response = requests.post(
+            CRM_API_URL,
+            json={"query": query, "variables": variables},
+            headers={"Authorization": f"Bearer {CRM_API_TOKEN}"}
+        )
+
+        if response.status_code != 200:
+            print(f"❌ Ошибка CRM запроса: {response.status_code} {response.text}")
+            return None
+
+        data = response.json()
+        orders = data.get("data", {}).get("orderFind", [])
+
+        if not orders:
+            print(f"ℹ️ Для {phone} заказов не найдено")
+            return None
+
+        # сортируем по createdAt (берём последний заказ)
+        last_order = sorted(orders, key=lambda x: x.get("createdAt", ""), reverse=True)[0]
+
+        return {
+            "id": last_order.get("id"),
+            "status": last_order.get("status")
         }
 
-        try:
-            resp = requests.post(
-                CRM_API_URL,
-                headers={"Authorization": f"Bearer {CRM_TOKEN}"},
-                json=query,
-                timeout=10
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            print(f"📦 Ответ CRM для {variant}:", json.dumps(data, ensure_ascii=False, indent=2))
-
-            orders = (
-                data.get("data", {})
-                    .get("ordersFetcher", {})
-                    .get("orders", [])
-            )
-            if orders:
-                return orders[0]
-
-        except Exception as e:
-            print(f"❌ Ошибка при запросе CRM: {e}")
-
-    return None
+    except Exception as e:
+        print(f"❌ Ошибка при запросе CRM: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
 
 
 def create_order(full_name, phone):
