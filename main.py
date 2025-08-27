@@ -19,7 +19,7 @@ from state_manager import (
 )
 
 # ✨ ИМПОРТИРУЕМ ВАШИ РЕАЛЬНЫЕ ФУНКЦИИ SALESRENDER API - ПРЕДПОЛАГАЕТСЯ, ЧТО ОНИ РАБОТАЮТ КОРРЕКТНО ✨
-from salesrender_api import create_order, needs_new_order
+from salesrender_api import create_order, client_exists 
 
 
 # ==============================
@@ -116,34 +116,37 @@ def fetch_order_from_crm(order_id):
 def process_new_lead(name, phone):
     """
     Регистрирует нового лида во внутренней БД бота и создает заказ в CRM, если это необходимо.
+    Эта функция теперь предназначена ТОЛЬКО для управления внутренней БД бота после проверки в CRM.
     """
-
-    # Проверка в базе/кэше
+    # Эта проверка в основном для внутренней БД бота, а не для статуса CRM для первоначального решения вебхука
     if client_in_db_or_cache(phone):
-        print(f"⚠️ Клиент {phone} уже в базе/кэше (process_new_lead), пропускаем создание/обновление.")
-        return None
+        print(f"⚠️ Клиент {phone} уже в базе/кэше (в process_new_lead), пропускаем создание/обновление.")
+        return None 
 
-    try:
-        if needs_new_order(phone):
-            print(f"✅ Для клиента {phone} нужно создать заказ.")
-            order_id = create_order(name, phone)
-            if order_id:
-                print(f"✅ Заказ {order_id} создан для {name}, {phone}.")
-                save_client_state(phone, name=name, in_crm=True)
-                return order_id
-            else:
-                print(f"❌ Ошибка при создании заказа для {phone}.")
-                save_client_state(phone, name=name, in_crm=False)
-                return None
-        else:
-            print(f"⛔ Для клиента {phone} новый заказ не требуется (statusId == 1).")
+    # Если мы дошли сюда, клиент новый для БД бота.
+    # Теперь снова проверяем CRM, чтобы решить, нужно ли создавать заказ.
+    # Примечание: Это важная проверка, потому что client_exists мог быть True ранее,
+    # что привело к ответу, но клиента все еще нужно добавить в БД бота.
+    crm_exists_status = client_exists(phone) # Вызываем реальную функцию client_exists здесь
+
+    if crm_exists_status:
+        # Клиент существует в CRM, но новый для БД бота. Просто добавляем в БД бота, не создавая новый заказ.
+        print(f"DEBUG: Клиент {phone} найден в CRM, но новый для БД бота. Сохраняем в БД бота с in_crm=True.")
+        save_client_state(phone, name=name, in_crm=True)
+        return None # Новый заказ не создан
+    else:
+        # Клиент НЕ найден в CRM (и новый для БД бота). Создаем заказ.
+        print(f"DEBUG: Клиент {phone} НЕ найден в CRM. Создаем заказ и сохраняем в БД бота.")
+        order_id = create_order(name, phone) # Вызываем реальную функцию create_order
+
+        if order_id:
+            print(f"✅ Заказ {order_id} создан для {name}, {phone}. Обновляем состояние в боте.")
             save_client_state(phone, name=name, in_crm=True)
+            return order_id
+        else:
+            print(f"❌ Не удалось создать заказ для {name}, {phone}. Создаем запись клиента без CRM связи в боте.")
+            save_client_state(phone, name=name, in_crm=False)
             return None
-
-    except Exception as e:
-        print(f"❌ Ошибка в process_new_lead: {e}")
-        save_client_state(phone, name=name, in_crm=False)
-        return None
 
 
 def process_salesrender_order(order):
