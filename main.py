@@ -123,22 +123,31 @@ def process_new_lead(name, phone):
     crm_info = client_exists(phone)
     print(f"DEBUG: client_exists вернул: {crm_info}")
 
-    # Если клиент найден и у него есть активный заказ → новый НЕ создаём
-    if crm_info and crm_info.get("has_active"):
-        last_order = crm_info.get("last_order")
-        status = (last_order.get("status") or {}).get("name") if last_order else "неизвестно"
-        order_id = last_order.get("id") if last_order else None
-        print(f"⏳ У клиента активный заказ {order_id}, статус={status} → новый не создаём")
+    last_order = crm_info.get("last_order")
+    has_active = crm_info.get("has_active", False)
+
+    # Если есть активный заказ — новый не создаём
+    if has_active and last_order:
+        status = (last_order.get("status") or {}).get("name", "неизвестно")
+        order_id = last_order.get("id")
+        print(f"⏳ У клиента уже есть активный заказ {order_id} (статус={status}) → новый НЕ создаём")
         save_client_state(phone, name=name, last_order_id=order_id, last_status=status)
         return None
 
-    # Иначе — создаём заказ
-    print(f"✅ Разрешено создание нового заказа для {phone}")
-    new_order_id = create_order(name, phone)
-    if new_order_id:
-        save_client_state(phone, name=name, last_order_id=new_order_id, last_status="Новый")
-        return new_order_id
-    return None
+    # Если нет активных заказов — создаём новый
+    print(f"✅ Нет активных заказов → создаём новый")
+    try:
+        new_order_id = create_order(name, phone)
+        if new_order_id:
+            save_client_state(phone, name=name, last_order_id=new_order_id, last_status="Новый")
+            print(f"📦 Создан новый заказ {new_order_id} для {phone}")
+            return new_order_id
+        else:
+            print(f"❌ Ошибка: create_order вернул None")
+            return None
+    except Exception as e:
+        print(f"❌ Ошибка при создании заказа: {e}")
+        return None
 
 
 def process_salesrender_order(order):
