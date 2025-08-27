@@ -95,8 +95,6 @@ def fetch_order_from_crm(order_id):
             ordersFetcher(filters: {{ include: {{ ids: ["{order_id}"] }} }}) {{
                 orders {{
                     id
-                    statusId
-                    status {{ name }}
                     data {{
                         humanNameFields {{ value {{ firstName lastName }} }}
                         phoneFields {{ value {{ international raw national }} }}
@@ -108,96 +106,45 @@ def fetch_order_from_crm(order_id):
     }
     try:
         response = requests.post(SALESRENDER_URL, headers=headers, json=query, timeout=10)
-        response.raise_for_status()
+        response.raise_for_status() # Вызывает HTTPError для плохих ответов (4xx или 5xx)
         data = response.json().get("data", {}).get("ordersFetcher", {}).get("orders", [])
         return data[0] if data else None
     except Exception as e:
         print(f"❌ Ошибка получения из CRM: {e}")
         return None
 
-
-def find_order_by_phone(phone):
-    """Ищет последний заказ по номеру телефона и возвращает его вместе со статусом."""
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": SALESRENDER_TOKEN
-    }
-    query = {
-        "query": f"""
-        query {{
-            ordersFetcher(
-                filters: {{ phones: ["{phone}"] }},
-                limit: 1,
-                sort: {{ by: createdAt, order: desc }}
-            ) {{
-                orders {{
-                    id
-                    statusId
-                    status {{ name }}
-                    data {{
-                        humanNameFields {{ value {{ firstName lastName }} }}
-                        phoneFields {{ value {{ international raw national }} }}
-                    }}
-                }}
-            }}
-        }}
-        """
-    }
-    try:
-        response = requests.post(SALESRENDER_URL, headers=headers, json=query, timeout=10)
-        response.raise_for_status()
-        data = response.json().get("data", {}).get("ordersFetcher", {}).get("orders", [])
-        return data[0] if data else None
-    except Exception as e:
-        print(f"❌ Ошибка поиска заказа по телефону в CRM: {e}")
-        return None
-
-
 def process_new_lead(name, phone):
     """
     Регистрирует нового лида во внутренней БД бота и создает заказ в CRM, если это необходимо.
-    Логика: если найден заказ со statusId == 1 → новый заказ НЕ создаем,
-    иначе создаем новый заказ.
+    Эта функция теперь предназначена ТОЛЬКО для управления внутренней БД бота после проверки в CRM.
     """
-    # Сначала проверяем внутреннюю БД/кэш
+    # Эта проверка в основном для внутренней БД бота, а не для статуса CRM для первоначального решения вебхука
     if client_in_db_or_cache(phone):
         print(f"⚠️ Клиент {phone} уже в базе/кэше (в process_new_lead), пропускаем создание/обновление.")
         return None 
 
-    # Проверяем CRM по телефону
-    existing_order = find_order_by_phone(phone)
+    # Если мы дошли сюда, клиент новый для БД бота.
+    # Теперь снова проверяем CRM, чтобы решить, нужно ли создавать заказ.
+    # Примечание: Это важная проверка, потому что client_exists мог быть True ранее,
+    # что привело к ответу, но клиента все еще нужно добавить в БД бота.
+    crm_exists_status = client_exists(phone) # Вызываем реальную функцию client_exists здесь
 
-    if existing_order:
-        status_id = existing_order.get("statusId")
-        status_name = existing_order.get("status", {}).get("name")
-        print(f"DEBUG: Найден заказ {existing_order['id']} со статусом {status_id} ('{status_name}').")
-
-        if status_id == 1:
-            # Заказ активный → не создаем новый
-            print(f"✅ Клиент {phone} уже в обработке (statusId=1). Новый заказ не создаем.")
-            save_client_state(phone, name=name, in_crm=True)
-            return None
-        else:
-            # Статус ≠ 1 → создаем повторный заказ
-            print(f"⚠️ Клиент {phone} обратился повторно (statusId={status_id}). Создаем новый заказ.")
-            order_id = create_order(name, phone)
-            if order_id:
-                print(f"✅ Создан ПОВТОРНЫЙ заказ {order_id} для {name}, {phone}.")
-                save_client_state(phone, name=name, in_crm=True)
-                return order_id
-            else:
-                print(f"❌ Не удалось создать повторный заказ для {name}, {phone}.")
-                return None
+    if crm_exists_status:
+        # Клиент существует в CRM, но новый для БД бота. Просто добавляем в БД бота, не создавая новый заказ.
+        print(f"DEBUG: Клиент {phone} найден в CRM, но новый для БД бота. Сохраняем в БД бота с in_crm=True.")
+        save_client_state(phone, name=name, in_crm=True)
+        return None # Новый заказ не создан
     else:
-        # Заказ не найден → новый клиент → создаем заказ
-        print(f"DEBUG: Клиент {phone} не найден в CRM. Создаем новый заказ.")
-        order_id = create_order(name, phone)
+        # Клиент НЕ найден в CRM (и новый для БД бота). Создаем заказ.
+        print(f"DEBUG: Клиент {phone} НЕ найден в CRM. Создаем заказ и сохраняем в БД бота.")
+        order_id = create_order(name, phone) # Вызываем реальную функцию create_order
+
         if order_id:
-            print(f"✅ Создан НОВЫЙ заказ {order_id} для {name}, {phone}.")
+            print(f"✅ Заказ {order_id} создан для {name}, {phone}. Обновляем состояние в боте.")
             save_client_state(phone, name=name, in_crm=True)
             return order_id
         else:
-            print(f"❌ Не удалось создать новый заказ для {name}, {phone}.")
+            print(f"❌ Не удалось создать заказ для {name}, {phone}. Создаем запись клиента без CRM связи в боте.")
             save_client_state(phone, name=name, in_crm=False)
             return None
 
@@ -207,6 +154,7 @@ def process_salesrender_order(order):
     Обрабатывает вебхук заказа SalesRender. Обновляет состояние клиента и отправляет сообщение менеджеру.
     """
     try:
+        # --- (Существующий код для парсинга данных заказа и нормализации телефона) ---
         if not order.get("customer") and "id" in order:
             print(f"⚠ customer пуст, подтягиваю из CRM по ID {order['id']}")
             full_order = fetch_order_from_crm(order["id"])
