@@ -10,7 +10,12 @@ SALESRENDER_API_KEY = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJod
 def client_exists(phone):
     """
     Проверяет клиента по телефону.
-    Возвращает последний заказ (dict) или None, если заказов нет.
+    Возвращает dict с данными последнего заказа:
+        {
+            "id": <int>,
+            "status": <str>
+        }
+    или None, если заказов нет.
     """
     headers = {
         "Authorization": SALESRENDER_API_KEY,
@@ -28,9 +33,6 @@ def client_exists(phone):
                 orders {{
                     id
                     status {{ name }}
-                    data {{
-                        phoneFields {{ value {{ raw }} }}
-                    }}
                 }}
             }}
         }}
@@ -41,14 +43,24 @@ def client_exists(phone):
         resp = requests.post(SALESRENDER_BASE_URL, headers=headers, json=query, timeout=10)
         resp.raise_for_status()
         orders = resp.json().get("data", {}).get("ordersFetcher", {}).get("orders", [])
+
         if orders:
-            print(f"🔍 Найден последний заказ {orders[0]['id']} для {phone} со статусом {orders[0]['status']['name']}")
-            return orders[0]
+            last_order = orders[0]
+            order_id = last_order["id"]
+            status_name = (last_order.get("status") or {}).get("name", "").strip()
+            print(f"🔍 Найден последний заказ {order_id} для {phone} со статусом '{status_name}'")
+            return {
+                "id": order_id,
+                "status": status_name
+            }
         else:
             print(f"ℹ️ Для {phone} заказов не найдено")
             return None
+
     except Exception as e:
         print(f"❌ Ошибка client_exists: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
