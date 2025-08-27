@@ -555,7 +555,14 @@ def webhook():
                 should_send_bot_reply = True
             else:
                 print(f"DEBUG: Новый клиент {user_phone}, регистрируем в CRM.")
-                process_new_lead(name, user_phone)
+                try:
+                    print("📩 Получен новый лид:", name, user_phone)
+                    order_id = process_new_lead(name, user_phone)
+                    print("📦 process_new_lead вернул:", order_id)
+                except Exception as e:
+                    print(f"❌ Ошибка при создании лида: {e}")
+                    import traceback
+                    traceback.print_exc()
                 should_send_bot_reply = False
 
         # --- Отправка ответа только для известных клиентов ---
