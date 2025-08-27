@@ -1,15 +1,10 @@
 import requests
 
-# --- Настройки SalesRender ---
 SALESRENDER_BASE_URL = "https://de.backend.salesrender.com/companies/1123/CRM"
 SALESRENDER_API_KEY = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXNyZW5kZXIuY29tLyIsImF1ZCI6IkNSTSIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc"
 
-# -----------------------
-# --- Функции для CRM ---
-# -----------------------
-
 def get_client(phone):
-    """Возвращает данные клиента из CRM (или None, если нет)"""
+    """Возвращает данные клиента из CRM или None"""
     url = f"{SALESRENDER_BASE_URL}/clients?search={phone}"
     headers = {"Authorization": SALESRENDER_API_KEY, "Content-Type": "application/json"}
     try:
@@ -18,7 +13,13 @@ def get_client(phone):
         data = resp.json()
         clients = data.get("data", [])
         if clients:
-            return clients[0]  # первый найденный клиент
+            client = clients[0]
+            # Debug: выводим клиент полностью
+            print("🔹 Клиент из CRM:", client)
+            # Приводим statusId к числу
+            if "statusId" in client:
+                client["statusId"] = int(client["statusId"])
+            return client
         return None
     except Exception as e:
         print(f"❌ Ошибка получения клиента: {e}")
@@ -27,18 +28,15 @@ def get_client(phone):
 def should_resend_lead(client):
     """Создаём заказ только если статус != 1"""
     if not client:
-        return True  # клиента нет в CRM — создаём
-    return client.get("statusId") != 1
-
-def client_exists(phone):
-    """Старая функция для совместимости со старым кодом"""
-    client = get_client(phone)
-    exists = client is not None
-    print(f"🔍 Клиент {'найден' if exists else 'не найден'} в CRM ({phone})")
-    return exists
+        return True
+    # Если statusId нет, считаем, что нужно создать заказ
+    status_id = client.get("statusId")
+    if status_id is None:
+        return True
+    return status_id != 1
 
 def create_order(full_name, phone):
-    """Создаёт заказ в SalesRender с statusId=1"""
+    """Создаёт заказ в CRM с statusId=1"""
     mutation = """
     mutation($firstName: String!, $lastName: String!, $phone: String!) {
       orderMutation {
@@ -71,8 +69,8 @@ def create_order(full_name, phone):
     try:
         response = requests.post(SALESRENDER_BASE_URL, json={"query": mutation, "variables": variables}, headers=headers)
         data = response.json()
+        print("🔹 Ответ от create_order:", data)
         if "errors" in data:
-            print("❌ Ошибка создания заказа:", data["errors"])
             return None
         return data["data"]["orderMutation"]["addOrder"]["id"]
     except Exception as e:
