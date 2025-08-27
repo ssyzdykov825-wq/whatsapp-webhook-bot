@@ -540,21 +540,25 @@ def webhook():
             profile = (contacts[0] or {}).get("profile") or {}
             name = profile.get("name", "Клиент")
 
+        print(f"STEP 1: user_phone={user_phone}, name={name}")
+
         # --- Проверка внутренней БД ---
         client_in_bot_db = client_in_db_or_cache(user_phone)
+        print(f"STEP 2: client_in_bot_db={client_in_bot_db}")
         should_send_bot_reply = False
 
         if client_in_bot_db:
-            print(f"DEBUG: Клиент {user_phone} найден в БД бота. Продолжаем диалог.")
+            print("STEP 3: Найден в БД бота → should_send_bot_reply = True")
             should_send_bot_reply = True
         else:
             crm_already_exists = client_exists(user_phone)
+            print(f"STEP 4: client_exists вернул: {crm_already_exists}")
             if crm_already_exists:
-                print(f"DEBUG: Клиент {user_phone} найден в CRM, добавляем в БД бота.")
+                print("STEP 5: Найден в CRM → сохраняем и ставим should_send_bot_reply = True")
                 save_client_state(user_phone, name=name, in_crm=True)
                 should_send_bot_reply = True
             else:
-                print(f"DEBUG: Новый клиент {user_phone}, регистрируем в CRM.")
+                print("STEP 6: Новый клиент, вызываем process_new_lead")
                 try:
                     print("📩 Получен новый лид:", name, user_phone)
                     order_id = process_new_lead(name, user_phone)
@@ -567,11 +571,12 @@ def webhook():
 
         # --- Отправка ответа только для известных клиентов ---
         if should_send_bot_reply and msg_type == "text" and user_msg.strip():
+            print(f"STEP 7: Отправляем ответ бота клиенту {user_phone}")
             reply = get_gpt_response(user_msg.strip(), user_phone)
             for part in split_message(reply):
                 send_whatsapp_message(user_phone, part)
         else:
-            print(f"DEBUG: Ответ бота не отправляется. CRM обновлена для {user_phone}")
+            print(f"STEP 8: Ответ бота не отправляется. CRM обновлена для {user_phone}")
 
         return jsonify({"status": "ok"}), 200
 
