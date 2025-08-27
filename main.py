@@ -529,42 +529,53 @@ def webhook():
 
         print(f"STEP 1: user_phone={user_phone}, name={name}")
 
-        # --- Проверка клиента и создание заказа ---
+        # --- Проверка клиента ---
         client_in_bot_db = client_in_db_or_cache(user_phone)
         print(f"STEP 2: client_in_bot_db={client_in_bot_db}")
         should_send_bot_reply = False
 
-        try:
-            print(f"📩 Вызываем process_new_lead для {user_phone}, имя: {name}")
-            order_id = process_new_lead(name, user_phone)
-            print(f"📦 process_new_lead вернул: {order_id}")
-        except Exception as e:
-            print(f"❌ Ошибка при создании заказа: {e}")
-            import traceback
-            traceback.print_exc()
+        allowed_statuses = {"Спам/Тест", "Отменен", "Недозвон 5 дней", "Недозвон", "Перезвонить"}
 
-        if client_in_bot_db:
-            print("STEP 3: Найден в БД бота → should_send_bot_reply = True")
+        crm_info = client_exists(user_phone)  # ⚠️ теперь нужно возвращать словарь {"id": ..., "status": ...} или None
+        print(f"STEP 3: client_exists вернул: {crm_info}")
+
+        if crm_info:
+            crm_status = crm_info.get("status", "")
+            print(f"STEP 4: Найден в CRM со статусом '{crm_status}'")
+
+            if crm_status in allowed_statuses:
+                print(f"STEP 5: Статус '{crm_status}' разрешён → создаём заказ")
+                try:
+                    order_id = process_new_lead(name, user_phone)
+                    print("📦 process_new_lead вернул:", order_id)
+                except Exception as e:
+                    print(f"❌ Ошибка при создании заказа: {e}")
+                    import traceback
+                    traceback.print_exc()
+            else:
+                print(f"STEP 5: Статус '{crm_status}' активный → заказ НЕ создаём")
+
+            save_client_state(user_phone, name=name, in_crm=True)
             should_send_bot_reply = True
         else:
-            crm_already_exists = client_exists(user_phone)
-            print(f"STEP 4: client_exists вернул: {crm_already_exists}")
-            if crm_already_exists:
-                print("STEP 5: Найден в CRM → сохраняем в БД бота")
-                save_client_state(user_phone, name=name, in_crm=True)
-                should_send_bot_reply = True
-            else:
-                print("STEP 6: Новый клиент, заказ уже создан process_new_lead")
-                should_send_bot_reply = False
+            print("STEP 4: Новый клиент → создаём заказ")
+            try:
+                order_id = process_new_lead(name, user_phone)
+                print("📦 process_new_lead вернул:", order_id)
+            except Exception as e:
+                print(f"❌ Ошибка при создании заказа: {e}")
+                import traceback
+                traceback.print_exc()
+            should_send_bot_reply = False
 
-        # --- Отправка ответа только для известных клиентов ---
+        # --- Отправка ответа ---
         if should_send_bot_reply and msg_type == "text" and user_msg.strip():
-            print(f"STEP 7: Отправляем ответ бота клиенту {user_phone}")
+            print(f"STEP 6: Отправляем ответ бота клиенту {user_phone}")
             reply = get_gpt_response(user_msg.strip(), user_phone)
             for part in split_message(reply):
                 send_whatsapp_message(user_phone, part)
         else:
-            print(f"STEP 8: Ответ бота не отправляется. CRM обновлена для {user_phone}")
+            print(f"STEP 6: Ответ бота не отправляется. CRM обновлена для {user_phone}")
 
         return jsonify({"status": "ok"}), 200
 
