@@ -22,7 +22,7 @@ import requests
 
 def client_exists(phone):
     headers = {
-        "Authorization": SALESRENDER_TOKEN,
+        "Authorization": SALESRENDER_API_KEY,
         "Content-Type": "application/json"
     }
 
@@ -31,7 +31,7 @@ def client_exists(phone):
         query {{
             ordersFetcher(
                 filters: {{ include: {{ phones: ["{phone}"] }} }}
-                limit: 1
+                limit: 5
                 sort: {{ field: "id", order: DESC }}
             ) {{
                 orders {{
@@ -44,7 +44,7 @@ def client_exists(phone):
     }
 
     try:
-        resp = requests.post(SALESRENDER_URL, headers=headers, json=query, timeout=10)
+        resp = requests.post(SALESRENDER_BASE_URL, headers=headers, json=query, timeout=10)
         resp.raise_for_status()
         orders = resp.json().get("data", {}).get("ordersFetcher", {}).get("orders", [])
 
@@ -55,16 +55,16 @@ def client_exists(phone):
         last_order = orders[0]
         last_status = (last_order.get("status") or {}).get("name", "").strip().lower()
 
-        # статусы, при которых МОЖНО создавать новый заказ
+        # ❌ Завершающие статусы (можно создавать новый заказ)
         closed_statuses = {
             "спам/тест", "отменен", "недозвон 5 дней", "недозвон", "перезвонить"
         }
 
         if last_status in closed_statuses:
-            print(f"✅ Последний заказ {last_order['id']} закрыт ({last_status}) → можно создать новый")
+            print(f"✅ Последний заказ {last_order['id']} в статусе '{last_status}' → можно создать новый")
             return {"has_active": False, "last_order": last_order}
         else:
-            print(f"⏳ У клиента есть активный заказ {last_order['id']} ({last_status}) → новый не создаём")
+            print(f"⏳ У клиента есть активный заказ {last_order['id']} со статусом '{last_status}'")
             return {"has_active": True, "last_order": last_order}
 
     except Exception as e:
