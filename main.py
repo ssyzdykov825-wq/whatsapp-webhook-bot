@@ -19,7 +19,7 @@ from state_manager import (
 )
 
 # ✨ ИМПОРТИРУЕМ ВАШИ РЕАЛЬНЫЕ ФУНКЦИИ SALESRENDER API - ПРЕДПОЛАГАЕТСЯ, ЧТО ОНИ РАБОТАЮТ КОРРЕКТНО ✨
-from salesrender_api import create_order, client_exists
+from salesrender_api import create_order, client_exists 
 
 
 # ==============================
@@ -81,7 +81,7 @@ def normalize_phone_number(phone_raw):
 # Утилиты SalesRender
 # ==============================
 # Примечание: create_order и client_exists теперь импортируются из salesrender_api.py
-# Убедитесь, что ваш salesrender_api.py корректно реализует client_exists (возвращает последний заказ или None)
+# Убедитесь, что ваш salesrender_api.py корректно реализует fetch_order_from_crm, если это необходимо.
 
 def fetch_order_from_crm(order_id):
     """Извлекает детали заказа из SalesRender CRM с помощью GraphQL."""
@@ -95,7 +95,6 @@ def fetch_order_from_crm(order_id):
             ordersFetcher(filters: {{ include: {{ ids: ["{order_id}"] }} }}) {{
                 orders {{
                     id
-                    status {{ name }}
                     data {{
                         humanNameFields {{ value {{ firstName lastName }} }}
                         phoneFields {{ value {{ international raw national }} }}
@@ -107,47 +106,47 @@ def fetch_order_from_crm(order_id):
     }
     try:
         response = requests.post(SALESRENDER_URL, headers=headers, json=query, timeout=10)
-        response.raise_for_status()
+        response.raise_for_status() # Вызывает HTTPError для плохих ответов (4xx или 5xx)
         data = response.json().get("data", {}).get("ordersFetcher", {}).get("orders", [])
-        print(f"DEBUG: fetch_order_from_crm({order_id}) вернул {data}")
         return data[0] if data else None
     except Exception as e:
         print(f"❌ Ошибка получения из CRM: {e}")
         return None
 
-
 def process_new_lead(name, phone):
-    print(f"\n=== process_new_lead START ===")
-    print(f"DEBUG: входные данные name={name}, phone={phone}")
+    """
+    Регистрирует нового лида во внутренней БД бота и создает заказ в CRM, если это необходимо.
+    Эта функция теперь предназначена ТОЛЬКО для управления внутренней БД бота после проверки в CRM.
+    """
+    # Эта проверка в основном для внутренней БД бота, а не для статуса CRM для первоначального решения вебхука
+    if client_in_db_or_cache(phone):
+        print(f"⚠️ Клиент {phone} уже в базе/кэше (в process_new_lead), пропускаем создание/обновление.")
+        return None 
 
-    crm_info = client_exists(phone)
-    print(f"DEBUG: client_exists вернул: {crm_info}")
+    # Если мы дошли сюда, клиент новый для БД бота.
+    # Теперь снова проверяем CRM, чтобы решить, нужно ли создавать заказ.
+    # Примечание: Это важная проверка, потому что client_exists мог быть True ранее,
+    # что привело к ответу, но клиента все еще нужно добавить в БД бота.
+    crm_exists_status = client_exists(phone) # Вызываем реальную функцию client_exists здесь
 
-    last_order = crm_info.get("last_order")
-    has_active = crm_info.get("has_active", False)
+    if crm_exists_status:
+        # Клиент существует в CRM, но новый для БД бота. Просто добавляем в БД бота, не создавая новый заказ.
+        print(f"DEBUG: Клиент {phone} найден в CRM, но новый для БД бота. Сохраняем в БД бота с in_crm=True.")
+        save_client_state(phone, name=name, in_crm=True)
+        return None # Новый заказ не создан
+    else:
+        # Клиент НЕ найден в CRM (и новый для БД бота). Создаем заказ.
+        print(f"DEBUG: Клиент {phone} НЕ найден в CRM. Создаем заказ и сохраняем в БД бота.")
+        order_id = create_order(name, phone) # Вызываем реальную функцию create_order
 
-    # Если есть активный заказ — новый не создаём
-    if has_active and last_order:
-        status = (last_order.get("status") or {}).get("name", "неизвестно")
-        order_id = last_order.get("id")
-        print(f"⏳ У клиента уже есть активный заказ {order_id} (статус={status}) → новый НЕ создаём")
-        save_client_state(phone, name=name, last_order_id=order_id, last_status=status)
-        return None
-
-    # Если нет активных заказов — создаём новый
-    print(f"✅ Нет активных заказов → создаём новый")
-    try:
-        new_order_id = create_order(name, phone)
-        if new_order_id:
-            save_client_state(phone, name=name, last_order_id=new_order_id, last_status="Новый")
-            print(f"📦 Создан новый заказ {new_order_id} для {phone}")
-            return new_order_id
+        if order_id:
+            print(f"✅ Заказ {order_id} создан для {name}, {phone}. Обновляем состояние в боте.")
+            save_client_state(phone, name=name, in_crm=True)
+            return order_id
         else:
-            print(f"❌ Ошибка: create_order вернул None")
+            print(f"❌ Не удалось создать заказ для {name}, {phone}. Создаем запись клиента без CRM связи в боте.")
+            save_client_state(phone, name=name, in_crm=False)
             return None
-    except Exception as e:
-        print(f"❌ Ошибка при создании заказа: {e}")
-        return None
 
 
 def process_salesrender_order(order):
@@ -511,7 +510,7 @@ def webhook():
             return jsonify({"status": "duplicate"}), 200
         PROCESSED_MESSAGES.add(msg_id)
 
-        user_phone = normalize_phone_number(msg.get("from"))
+        user_phone = normalize_phone_number(msg.get("from")) 
         user_msg = (msg.get("text") or {}).get("body", "")  # может быть пустым
         msg_type = msg.get("type")
 
@@ -527,40 +526,31 @@ def webhook():
             profile = (contacts[0] or {}).get("profile") or {}
             name = profile.get("name", "Клиент")
 
-        print(f"STEP 1: user_phone={user_phone}, name={name}")
-
-        # --- Проверка клиента в БД бота ---
+        # --- Проверка внутренней БД ---
         client_in_bot_db = client_in_db_or_cache(user_phone)
-        print(f"STEP 2: client_in_bot_db={client_in_bot_db}")
         should_send_bot_reply = False
 
-        # --- Проверка клиента в CRM ---
-        crm_info = client_exists(user_phone)  # ⚠️ возвращает {"has_active": bool, "last_order": {...}}
-        print(f"STEP 3: client_exists вернул: {crm_info}")
-
-        if crm_info["has_active"]:
-            print("🚫 Найден активный заказ → новый заказ НЕ создаём")
-            save_client_state(user_phone, name=name, in_crm=True)
+        if client_in_bot_db:
+            print(f"DEBUG: Клиент {user_phone} найден в БД бота. Продолжаем диалог.")
             should_send_bot_reply = True
         else:
-            print("✅ Нет активных заказов → создаём новый")
-            try:
-                order_id = process_new_lead(name, user_phone)
-                print("📦 process_new_lead вернул:", order_id)
-            except Exception as e:
-                print(f"❌ Ошибка при создании заказа: {e}")
-                import traceback
-                traceback.print_exc()
-            should_send_bot_reply = False
+            crm_already_exists = client_exists(user_phone)
+            if crm_already_exists:
+                print(f"DEBUG: Клиент {user_phone} найден в CRM, добавляем в БД бота.")
+                save_client_state(user_phone, name=name, in_crm=True)
+                should_send_bot_reply = True
+            else:
+                print(f"DEBUG: Новый клиент {user_phone}, регистрируем в CRM.")
+                process_new_lead(name, user_phone)
+                should_send_bot_reply = False
 
-        # --- Отправка ответа ---
+        # --- Отправка ответа только для известных клиентов ---
         if should_send_bot_reply and msg_type == "text" and user_msg.strip():
-            print(f"STEP 4: Отправляем ответ бота клиенту {user_phone}")
             reply = get_gpt_response(user_msg.strip(), user_phone)
             for part in split_message(reply):
                 send_whatsapp_message(user_phone, part)
         else:
-            print(f"STEP 4: Ответ бота не отправляется. CRM обновлена для {user_phone}")
+            print(f"DEBUG: Ответ бота не отправляется. CRM обновлена для {user_phone}")
 
         return jsonify({"status": "ok"}), 200
 
