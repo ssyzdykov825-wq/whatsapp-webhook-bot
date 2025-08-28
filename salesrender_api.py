@@ -22,7 +22,7 @@ import requests
 
 def client_exists(phone):
     headers = {
-        "Authorization": SALESRENDER_API_KEY,
+        "Authorization": SALESRENDER_TOKEN,
         "Content-Type": "application/json"
     }
 
@@ -44,7 +44,7 @@ def client_exists(phone):
     }
 
     try:
-        resp = requests.post(SALESRENDER_BASE_URL, headers=headers, json=query, timeout=10)
+        resp = requests.post(SALESRENDER_URL, headers=headers, json=query, timeout=10)
         resp.raise_for_status()
         orders = resp.json().get("data", {}).get("ordersFetcher", {}).get("orders", [])
 
