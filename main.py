@@ -83,106 +83,111 @@ def normalize_phone_number(phone_raw):
 # Примечание: create_order и client_exists теперь импортируются из salesrender_api.py
 # Убедитесь, что ваш salesrender_api.py корректно реализует fetch_order_from_crm, если это необходимо.
 
+import requests
+
+# Заглушки для функций, которые должны быть определены в вашем проекте
+def client_in_db_or_cache(phone):
+    return False
+
+def save_client_state(phone, name, in_crm):
+    pass
+
+def normalize_phone_number(phone):
+    return phone
+
+# Импортируем только client_exists и create_order
+from salesrender_api import client_exists, create_order, SALESRENDER_TOKEN, SALESRENDER_URL
+
 def fetch_order_from_crm(order_id):
-    """Извлекает детали заказа из SalesRender CRM с помощью GraphQL."""
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": SALESRENDER_TOKEN
-    }
-    query = {
-        "query": f"""
-        query {{
-            ordersFetcher(filters: {{ include: {{ ids: ["{order_id}"] }} }}) {{
-                orders {{
-                    id
-                    data {{
-                        humanNameFields {{ value {{ firstName lastName }} }}
-                        phoneFields {{ value {{ international raw national }} }}
-                    }}
-                }}
-            }}
-        }}
-        """
-    }
-    try:
-        response = requests.post(SALESRENDER_URL, headers=headers, json=query, timeout=10)
-        response.raise_for_status() # Вызывает HTTPError для плохих ответов (4xx или 5xx)
-        data = response.json().get("data", {}).get("ordersFetcher", {}).get("orders", [])
-        return data[0] if data else None
-    except Exception as e:
-        print(f"❌ Ошибка получения из CRM: {e}")
-        return None
+    """Извлекает детали заказа из SalesRender CRM с помощью GraphQL."""
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": SALESRENDER_TOKEN
+    }
+    query = {
+        "query": f"""
+        query {{
+            ordersFetcher(filters: {{ include: {{ ids: ["{order_id}"] }} }}) {{
+                orders {{
+                    id
+                    data {{
+                        humanNameFields {{ value {{ firstName lastName }} }}
+                        phoneFields {{ value {{ international raw national }} }}
+                    }}
+                }}
+            }}
+        }}
+        """
+    }
+    try:
+        response = requests.post(SALESRENDER_URL, headers=headers, json=query, timeout=10)
+        response.raise_for_status()
+        data = response.json().get("data", {}).get("ordersFetcher", {}).get("orders", [])
+        return data[0] if data else None
+    except Exception as e:
+        print(f"❌ Ошибка получения из CRM: {e}")
+        return None
 
-def process_new_lead(name, phone):
-    """
-    Регистрирует нового лида во внутренней БД бота и создает заказ в CRM, если это необходимо.
-    Эта функция теперь предназначена ТОЛЬКО для управления внутренней БД бота после проверки в CRM.
-    """
-    # Эта проверка в основном для внутренней БД бота, а не для статуса CRM для первоначального решения вебхука
-    if client_in_db_or_cache(phone):
-        print(f"⚠️ Клиент {phone} уже в базе/кэше (в process_new_lead), пропускаем создание/обновление.")
-        return None 
+def process_new_lead(name, phone, project_id): # <-- Изменено
+    """
+    Регистрирует нового лида во внутренней БД бота и создает заказ в CRM, если это необходимо.
+    """
+    if client_in_db_or_cache(phone):
+        print(f"⚠️ Клиент {phone} уже в базе/кэше (в process_new_lead), пропускаем создание/обновление.")
+        return None 
 
-    # Если мы дошли сюда, клиент новый для БД бота.
-    # Теперь снова проверяем CRM, чтобы решить, нужно ли создавать заказ.
-    # Примечание: Это важная проверка, потому что client_exists мог быть True ранее,
-    # что привело к ответу, но клиента все еще нужно добавить в БД бота.
-    crm_exists_status = client_exists(phone) # Вызываем реальную функцию client_exists здесь
+    crm_exists_status = client_exists(phone)
 
-    if crm_exists_status:
-        # Клиент существует в CRM, но новый для БД бота. Просто добавляем в БД бота, не создавая новый заказ.
-        print(f"DEBUG: Клиент {phone} найден в CRM, но новый для БД бота. Сохраняем в БД бота с in_crm=True.")
-        save_client_state(phone, name=name, in_crm=True)
-        return None # Новый заказ не создан
-    else:
-        # Клиент НЕ найден в CRM (и новый для БД бота). Создаем заказ.
-        print(f"DEBUG: Клиент {phone} НЕ найден в CRM. Создаем заказ и сохраняем в БД бота.")
-        order_id = create_order(name, phone) # Вызываем реальную функцию create_order
+    if crm_exists_status:
+        print(f"DEBUG: Клиент {phone} найден в CRM, но новый для БД бота. Сохраняем в БД бота с in_crm=True.")
+        save_client_state(phone, name=name, in_crm=True)
+        return None
+    else:
+        print(f"DEBUG: Клиент {phone} НЕ найден в CRM. Создаем заказ и сохраняем в БД бота.")
+        order_id = create_order(name, phone, project_id) # <-- Изменено
 
-        if order_id:
-            print(f"✅ Заказ {order_id} создан для {name}, {phone}. Обновляем состояние в боте.")
-            save_client_state(phone, name=name, in_crm=True)
-            return order_id
-        else:
-            print(f"❌ Не удалось создать заказ для {name}, {phone}. Создаем запись клиента без CRM связи в боте.")
-            save_client_state(phone, name=name, in_crm=False)
-            return None
-
+        if order_id:
+            print(f"✅ Заказ {order_id} создан для {name}, {phone}. Обновляем состояние в боте.")
+            save_client_state(phone, name=name, in_crm=True)
+            return order_id
+        else:
+            print(f"❌ Не удалось создать заказ для {name}, {phone}. Создаем запись клиента без CRM связи в боте.")
+            save_client_state(phone, name=name, in_crm=False)
+            return None
 
 def process_salesrender_order(order):
-    """
-    Обрабатывает вебхук заказа SalesRender. Обновляет состояние клиента и отправляет сообщение менеджеру.
-    """
-    try:
-        # --- (Существующий код для парсинга данных заказа и нормализации телефона) ---
-        if not order.get("customer") and "id" in order:
-            print(f"⚠ customer пуст, подтягиваю из CRM по ID {order['id']}")
-            full_order = fetch_order_from_crm(order["id"])
-            if full_order:
-                order = full_order
-            else:
-                print("❌ CRM не вернул данные — пропуск")
-                return
+    """
+    Обрабатывает вебхук заказа SalesRender. Обновляет состояние клиента и отправляет сообщение менеджеру.
+    """
+    try:
+        if not order.get("customer") and "id" in order:
+            print(f"⚠ customer пуст, подтягиваю из CRM по ID {order['id']}")
+            full_order = fetch_order_from_crm(order["id"])
+            if full_order:
+                order = full_order
+            else:
+                print("❌ CRM не вернул данные — пропуск")
+                return
 
-        first_name, last_name, phone = "", "", ""
-        if "customer" in order:
-            first_name = order.get("customer", {}).get("name", {}).get("firstName", "").strip()
-            last_name = order.get("customer", {}).get("name", {}).get("lastName", "").strip()
-            phone = normalize_phone_number(order.get("customer", {}).get("phone", {}).get("raw", "").strip())
-        else:
-            human_fields = order.get("data", {}).get("humanNameFields", [])
-            phone_fields = order.get("data", {}).get("phoneFields", [])
-            if human_fields:
-                first_name = human_fields[0].get("value", {}).get("firstName", "").strip()
-                last_name = human_fields[0].get("value", {}).get("lastName", "").strip()
-            if phone_fields:
-                phone = normalize_phone_number(phone_fields[0].get("value", {}).get("international", "").strip())
+        first_name, last_name, phone = "", "", ""
+        if "customer" in order:
+            first_name = order.get("customer", {}).get("name", {}).get("firstName", "").strip()
+            last_name = order.get("customer", {}).get("name", {}).get("lastName", "").strip()
+            phone = normalize_phone_number(order.get("customer", {}).get("phone", {}).get("raw", "").strip())
+        else:
+            human_fields = order.get("data", {}).get("humanNameFields", [])
+            phone_fields = order.get("data", {}).get("phoneFields", [])
+            if human_fields:
+                first_name = human_fields[0].get("value", {}).get("firstName", "").strip()
+                last_name = human_fields[0].get("value", {}).get("lastName", "").strip()
+            if phone_fields:
+                phone = normalize_phone_number(phone_fields[0].get("value", {}).get("international", "").strip())
 
-        name = f"{first_name} {last_name}".strip() or "Клиент"
+        name = f"{first_name} {last_name}".strip() or "Клиент"
 
-        if not phone:
-            print("❌ Телефон отсутствует — пропуск")
-            return
+        if not phone:
+            print("❌ Телефон отсутствует — пропуск")
+            return
         
         # --- (Конец существующего кода парсинга) ---
 
@@ -510,11 +515,11 @@ def webhook():
             return jsonify({"status": "duplicate"}), 200
         PROCESSED_MESSAGES.add(msg_id)
 
-        user_phone = normalize_phone_number(msg.get("from")) 
-        user_msg = (msg.get("text") or {}).get("body", "")  # может быть пустым
+        user_phone = normalize_phone_number(msg.get("from"))
+        user_msg = (msg.get("text") or {}).get("body", "").strip()
         msg_type = msg.get("type")
 
-        print(f"DEBUG: Обрабатываем сообщение от {user_phone}, тип: {msg_type}, текст: {user_msg}")
+        print(f"DEBUG: Обрабатываем сообщение от {user_phone}, тип: {msg_type}, текст: '{user_msg}'")
 
         if not user_phone:
             print(f"INFO: Сообщение без номера — игнорируем")
@@ -526,9 +531,18 @@ def webhook():
             profile = (contacts[0] or {}).get("profile") or {}
             name = profile.get("name", "Клиент")
 
+        # ✅ Определяем projectId по тексту
+        if "салем" in user_msg.lower():
+            project_id = 1
+        elif "здравствуйте" in user_msg.lower():
+            project_id = 2
+        else:
+            project_id = 1  # по умолчанию
+        
+        should_send_bot_reply = False
+
         # --- Проверка внутренней БД ---
         client_in_bot_db = client_in_db_or_cache(user_phone)
-        should_send_bot_reply = False
 
         if client_in_bot_db:
             print(f"DEBUG: Клиент {user_phone} найден в БД бота. Продолжаем диалог.")
@@ -541,12 +555,13 @@ def webhook():
                 should_send_bot_reply = True
             else:
                 print(f"DEBUG: Новый клиент {user_phone}, регистрируем в CRM.")
-                process_new_lead(name, user_phone)
+                # ✅ Передаем project_id
+                process_new_lead(name, user_phone, project_id)
                 should_send_bot_reply = False
 
         # --- Отправка ответа только для известных клиентов ---
-        if should_send_bot_reply and msg_type == "text" and user_msg.strip():
-            reply = get_gpt_response(user_msg.strip(), user_phone)
+        if should_send_bot_reply and msg_type == "text" and user_msg:
+            reply = get_gpt_response(user_msg, user_phone)
             for part in split_message(reply):
                 send_whatsapp_message(user_phone, part)
         else:
