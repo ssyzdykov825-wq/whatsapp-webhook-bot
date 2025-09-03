@@ -83,6 +83,9 @@ def normalize_phone_number(phone_raw):
 # Примечание: create_order и client_exists теперь импортируются из salesrender_api.py
 # Убедитесь, что ваш salesrender_api.py корректно реализует fetch_order_from_crm, если это необходимо.
 
+import requests
+from salesrender_api import client_exists, create_order, SALESRENDER_TOKEN, SALESRENDER_URL
+
 # Заглушки для функций, которые должны быть определены в вашем проекте
 def client_in_db_or_cache(phone):
     return False
@@ -92,9 +95,6 @@ def save_client_state(phone, name, in_crm):
 
 def normalize_phone_number(phone):
     return phone
-
-# Импортируем только client_exists и create_order
-from salesrender_api import client_exists, create_order, SALESRENDER_TOKEN, SALESRENDER_URL
 
 def fetch_order_from_crm(order_id):
     """Извлекает детали заказа из SalesRender CRM с помощью GraphQL."""
@@ -126,7 +126,7 @@ def fetch_order_from_crm(order_id):
         print(f"❌ Ошибка получения из CRM: {e}")
         return None
 
-def process_new_lead(name, phone, project_id):  # <-- Добавили project_id
+def process_new_lead(name, phone, project_id):
     """
     Регистрирует нового лида во внутренней БД бота и создает заказ в CRM, если это необходимо.
     """
@@ -142,7 +142,7 @@ def process_new_lead(name, phone, project_id):  # <-- Добавили project_i
         return None
     else:
         print(f"DEBUG: Клиент {phone} НЕ найден в CRM. Создаем заказ и сохраняем в БД бота.")
-        order_id = create_order(name, phone, project_id)  # <-- Добавили project_id
+        order_id = create_order(name, phone, str(project_id))  # ✅ Передаем project_id как строку
 
         if order_id:
             print(f"✅ Заказ {order_id} создан для {name}, {phone}. Обновляем состояние в боте.")
@@ -186,6 +186,8 @@ def process_salesrender_order(order):
         if not phone:
             print("❌ Телефон отсутствует — пропуск")
             return
+    except Exception as e:
+        print(f"❌ Ошибка в process_salesrender_order: {e}")
         
         # --- (Конец существующего кода парсинга) ---
 
