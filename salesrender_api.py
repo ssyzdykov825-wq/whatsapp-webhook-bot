@@ -114,7 +114,7 @@ def webhook():
             return jsonify({"status": "no phone"}), 200
 
         # ✅ Определяем projectId по тексту
-        if "салем" in text:
+        if "саламатсыз" in text:
             project_id = 1
         elif "здравствуйте" in text:
             project_id = 2
