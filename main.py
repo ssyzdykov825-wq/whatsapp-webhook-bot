@@ -150,7 +150,7 @@ def process_new_lead(name, phone, project_id): # <-- Изменено
             print(f"✅ Заказ {order_id} создан для {name}, {phone}. Обновляем состояние в боте.")
             save_client_state(phone, name=name, in_crm=True)
             return order_id
-        else:
+     else:
             print(f"❌ Не удалось создать заказ для {name}, {phone}. Создаем запись клиента без CRM связи в боте.")
             save_client_state(phone, name=name, in_crm=False)
             return None
