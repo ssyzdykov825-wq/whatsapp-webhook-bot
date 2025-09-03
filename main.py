@@ -83,8 +83,6 @@ def normalize_phone_number(phone_raw):
 # Примечание: create_order и client_exists теперь импортируются из salesrender_api.py
 # Убедитесь, что ваш salesrender_api.py корректно реализует fetch_order_from_crm, если это необходимо.
 
-import requests
-
 # Заглушки для функций, которые должны быть определены в вашем проекте
 def client_in_db_or_cache(phone):
     return False
@@ -99,95 +97,95 @@ def normalize_phone_number(phone):
 from salesrender_api import client_exists, create_order, SALESRENDER_TOKEN, SALESRENDER_URL
 
 def fetch_order_from_crm(order_id):
-    """Извлекает детали заказа из SalesRender CRM с помощью GraphQL."""
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": SALESRENDER_TOKEN
-    }
-    query = {
-        "query": f"""
-        query {{
-            ordersFetcher(filters: {{ include: {{ ids: ["{order_id}"] }} }}) {{
-                orders {{
-                    id
-                    data {{
-                        humanNameFields {{ value {{ firstName lastName }} }}
-                        phoneFields {{ value {{ international raw national }} }}
-                    }}
-                }}
-            }}
-        }}
-        """
-    }
-    try:
-        response = requests.post(SALESRENDER_URL, headers=headers, json=query, timeout=10)
-        response.raise_for_status()
-        data = response.json().get("data", {}).get("ordersFetcher", {}).get("orders", [])
-        return data[0] if data else None
-    except Exception as e:
-        print(f"❌ Ошибка получения из CRM: {e}")
-        return None
+    """Извлекает детали заказа из SalesRender CRM с помощью GraphQL."""
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": SALESRENDER_TOKEN
+    }
+    query = {
+        "query": f"""
+        query {{
+            ordersFetcher(filters: {{ include: {{ ids: ["{order_id}"] }} }}) {{
+                orders {{
+                    id
+                    data {{
+                        humanNameFields {{ value {{ firstName lastName }} }}
+                        phoneFields {{ value {{ international raw national }} }}
+                    }}
+                }}
+            }}
+        }}
+        """
+    }
+    try:
+        response = requests.post(SALESRENDER_URL, headers=headers, json=query, timeout=10)
+        response.raise_for_status()
+        data = response.json().get("data", {}).get("ordersFetcher", {}).get("orders", [])
+        return data[0] if data else None
+    except Exception as e:
+        print(f"❌ Ошибка получения из CRM: {e}")
+        return None
 
-def process_new_lead(name, phone, project_id): # <-- Изменено
-    """
-    Регистрирует нового лида во внутренней БД бота и создает заказ в CRM, если это необходимо.
-    """
-    if client_in_db_or_cache(phone):
-        print(f"⚠️ Клиент {phone} уже в базе/кэше (в process_new_lead), пропускаем создание/обновление.")
-        return None 
+def process_new_lead(name, phone, project_id):  # <-- Добавили project_id
+    """
+    Регистрирует нового лида во внутренней БД бота и создает заказ в CRM, если это необходимо.
+    """
+    if client_in_db_or_cache(phone):
+        print(f"⚠️ Клиент {phone} уже в базе/кэше (в process_new_lead), пропускаем создание/обновление.")
+        return None
 
-    crm_exists_status = client_exists(phone)
+    crm_exists_status = client_exists(phone)
 
-    if crm_exists_status:
-        print(f"DEBUG: Клиент {phone} найден в CRM, но новый для БД бота. Сохраняем в БД бота с in_crm=True.")
-        save_client_state(phone, name=name, in_crm=True)
-        return None
-    else:
-        print(f"DEBUG: Клиент {phone} НЕ найден в CRM. Создаем заказ и сохраняем в БД бота.")
-        order_id = create_order(name, phone, project_id) # <-- Изменено
+    if crm_exists_status:
+        print(f"DEBUG: Клиент {phone} найден в CRM, но новый для БД бота. Сохраняем в БД бота с in_crm=True.")
+        save_client_state(phone, name=name, in_crm=True)
+        return None
+    else:
+        print(f"DEBUG: Клиент {phone} НЕ найден в CRM. Создаем заказ и сохраняем в БД бота.")
+        order_id = create_order(name, phone, project_id)  # <-- Добавили project_id
 
-        if order_id:
-            print(f"✅ Заказ {order_id} создан для {name}, {phone}. Обновляем состояние в боте.")
-            save_client_state(phone, name=name, in_crm=True)
-            return order_id
-     else:
-            print(f"❌ Не удалось создать заказ для {name}, {phone}. Создаем запись клиента без CRM связи в боте.")
-            save_client_state(phone, name=name, in_crm=False)
-            return None
+        if order_id:
+            print(f"✅ Заказ {order_id} создан для {name}, {phone}. Обновляем состояние в боте.")
+            save_client_state(phone, name=name, in_crm=True)
+            return order_id
+        else:
+            print(f"❌ Не удалось создать заказ для {name}, {phone}. Создаем запись клиента без CRM связи в боте.")
+            save_client_state(phone, name=name, in_crm=False)
+            return None
 
 def process_salesrender_order(order):
-    """
-    Обрабатывает вебхук заказа SalesRender. Обновляет состояние клиента и отправляет сообщение менеджеру.
-    """
-    try:
-        if not order.get("customer") and "id" in order:
-            print(f"⚠ customer пуст, подтягиваю из CRM по ID {order['id']}")
-            full_order = fetch_order_from_crm(order["id"])
-            if full_order:
-                order = full_order
-            else:
-                print("❌ CRM не вернул данные — пропуск")
-                return
+    """
+    Обрабатывает вебхук заказа SalesRender. Обновляет состояние клиента и отправляет сообщение менеджеру.
+    """
+    try:
+        if not order.get("customer") and "id" in order:
+            print(f"⚠ customer пуст, подтягиваю из CRM по ID {order['id']}")
+            full_order = fetch_order_from_crm(order["id"])
+            if full_order:
+                order = full_order
+            else:
+                print("❌ CRM не вернул данные — пропуск")
+                return
 
-        first_name, last_name, phone = "", "", ""
-        if "customer" in order:
-            first_name = order.get("customer", {}).get("name", {}).get("firstName", "").strip()
-            last_name = order.get("customer", {}).get("name", {}).get("lastName", "").strip()
-            phone = normalize_phone_number(order.get("customer", {}).get("phone", {}).get("raw", "").strip())
-        else:
-            human_fields = order.get("data", {}).get("humanNameFields", [])
-            phone_fields = order.get("data", {}).get("phoneFields", [])
-            if human_fields:
-                first_name = human_fields[0].get("value", {}).get("firstName", "").strip()
-                last_name = human_fields[0].get("value", {}).get("lastName", "").strip()
-            if phone_fields:
-                phone = normalize_phone_number(phone_fields[0].get("value", {}).get("international", "").strip())
+        first_name, last_name, phone = "", "", ""
+        if "customer" in order:
+            first_name = order.get("customer", {}).get("name", {}).get("firstName", "").strip()
+            last_name = order.get("customer", {}).get("name", {}).get("lastName", "").strip()
+            phone = normalize_phone_number(order.get("customer", {}).get("phone", {}).get("raw", "").strip())
+        else:
+            human_fields = order.get("data", {}).get("humanNameFields", [])
+            phone_fields = order.get("data", {}).get("phoneFields", [])
+            if human_fields:
+                first_name = human_fields[0].get("value", {}).get("firstName", "").strip()
+                last_name = human_fields[0].get("value", {}).get("lastName", "").strip()
+            if phone_fields:
+                phone = normalize_phone_number(phone_fields[0].get("value", {}).get("international", "").strip())
 
-        name = f"{first_name} {last_name}".strip() or "Клиент"
+        name = f"{first_name} {last_name}".strip() or "Клиент"
 
-        if not phone:
-            print("❌ Телефон отсутствует — пропуск")
-            return
+        if not phone:
+            print("❌ Телефон отсутствует — пропуск")
+            return
         
         # --- (Конец существующего кода парсинга) ---
 
