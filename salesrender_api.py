@@ -5,13 +5,13 @@ app = Flask(__name__)
 
 # Настройки SalesRender
 SALESRENDER_BASE_URL = "https://de.backend.salesrender.com/companies/1123/CRM"
-SALESRENDER_API_KEY = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXNyZW5kZXIuY29tLyIsImF1ZCI6IkNSTSIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc"
+SALESRENDER_TOKEN = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXNyZW5kZXIuY29tLyIsImF1ZCI6IkNSTSIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc"
 
 def client_exists(phone):
     """Проверяет, есть ли клиент с таким телефоном в SalesRender"""
     url = f"{SALESRENDER_BASE_URL}/clients?search={phone}"
     headers = {
-        "Authorization": SALESRENDER_API_KEY,
+        "Authorization": SALESRENDER_TOKEN,
         "Content-Type": "application/json"
     }
     try:
@@ -55,7 +55,7 @@ def create_order(full_name, phone, project_id):
 
     headers = {
         "Content-Type": "application/json",
-        "Authorization": SALESRENDER_API_KEY
+        "Authorization": SALESRENDER_TOKEN
     }
 
     variables = {
