@@ -25,14 +25,14 @@ def client_exists(phone):
         print(f"❌ Ошибка проверки клиента: {e}")
         return False
 
-def create_order(full_name, phone):
+def create_order(full_name, phone, project_id):
     """Создаёт заказ в SalesRender"""
     mutation = """
-    mutation($firstName: String!, $lastName: String!, $phone: String!) {
+    mutation($firstName: String!, $lastName: String!, $phone: String!, $projectId: Int!) {
       orderMutation {
         addOrder(
           input: {
-            projectId: 1
+            projectId: $projectId
             statusId: 1
             orderData: {
               humanNameFields: [
@@ -61,7 +61,8 @@ def create_order(full_name, phone):
     variables = {
         "firstName": first_name,
         "lastName": last_name,
-        "phone": phone
+        "phone": phone,
+        "projectId": project_id
     }
 
     try:
@@ -75,6 +76,7 @@ def create_order(full_name, phone):
         print(f"❌ Ошибка создания заказа: {e}")
         return None
 
+# ДОБАВЬ проверку ключевых слов перед вызовом create_order
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
@@ -91,10 +93,12 @@ def webhook():
 
         phone = None
         name = "Клиент"
+        text = ""
 
         # Берём номер телефона
         if messages:
             phone = messages[0].get("from")
+            text = messages[0].get("text", {}).get("body", "").lower()  # Получаем текст сообщения
         elif contacts:
             phone = contacts[0].get("wa_id")
 
@@ -106,13 +110,23 @@ def webhook():
             print("❌ Не удалось определить номер телефона")
             return jsonify({"status": "no phone"}), 200
 
+        # ✅ Определяем projectId по тексту
+        if "салем" in text:
+            project_id = 1
+        elif "здравствуйте" in text:
+            project_id = 2
+        else:
+            project_id = 1  # по умолчанию
+
+        print(f"📌 Текст: '{text}', выбран projectId: {project_id}")
+
         # Проверка — есть ли клиент в CRM
         if client_exists(phone):
             print(f"⚠️ Клиент {phone} уже есть в CRM — заказ не создаём")
             return jsonify({"status": "client exists"}), 200
 
-        # Создаём заказ в CRM
-        order_id = create_order(name, phone)
+        # Создаём заказ в CRM с нужным projectId
+        order_id = create_order(name, phone, project_id)
         if not order_id:
             return jsonify({"status": "error creating order"}), 500
 
