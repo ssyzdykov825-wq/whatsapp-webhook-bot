@@ -563,7 +563,7 @@ def webhook():
             name = profile.get("name", "Клиент")
 
         # ✅ Определяем projectId по тексту
-        if "салем" in user_msg.lower():
+        if "Саламатсыз" in user_msg.lower():
             project_id = 1
         elif "здравствуйте" in user_msg.lower():
             project_id = 2
