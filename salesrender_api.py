@@ -95,7 +95,7 @@ def webhook():
         name = "Клиент"
         text = ""
 
-        # Берём номер телефона
+        # Берём номер телефона и текст
         if messages:
             phone = messages[0].get("from")
             text = messages[0].get("text", {}).get("body", "").lower()  # Получаем текст сообщения
