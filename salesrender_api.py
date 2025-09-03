@@ -28,7 +28,7 @@ def client_exists(phone):
 def create_order(full_name, phone, project_id):
     """Создаёт заказ в SalesRender"""
     mutation = """
-    mutation($firstName: String!, $lastName: String!, $phone: String!, $projectId: Int!) {
+    mutation($firstName: String!, $lastName: String!, $phone: String!, $projectId: ID!) {
       orderMutation {
         addOrder(
           input: {
@@ -49,6 +49,8 @@ def create_order(full_name, phone, project_id):
       }
     }
     """
+
+    # Разбиваем имя на first и last
     name_parts = full_name.strip().split(" ", 1)
     first_name = name_parts[0]
     last_name = name_parts[1] if len(name_parts) > 1 else ""
@@ -58,11 +60,12 @@ def create_order(full_name, phone, project_id):
         "Authorization": SALESRENDER_TOKEN
     }
 
+    # ВАЖНО: project_id передаём как строку!
     variables = {
         "firstName": first_name,
         "lastName": last_name,
         "phone": phone,
-        "projectId": project_id
+        "projectId": str(project_id)
     }
 
     try:
