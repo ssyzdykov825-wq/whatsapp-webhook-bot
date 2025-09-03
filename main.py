@@ -80,22 +80,34 @@ def normalize_phone_number(phone_raw):
 # ==============================
 # Утилиты SalesRender
 # ==============================
-# Примечание: create_order и client_exists теперь импортируются из salesrender_api.py
-# Убедитесь, что ваш salesrender_api.py корректно реализует fetch_order_from_crm, если это необходимо.
+# Примечание: create_order и client_exists импортируются из salesrender_api.py
+# Убедитесь, что в salesrender_api.py реализованы:
+#   - client_exists(phone)
+#   - create_order(name, phone, project_id)
+#   - SALESRENDER_TOKEN
+#   - SALESRENDER_URL
 
 import requests
 from salesrender_api import client_exists, create_order, SALESRENDER_TOKEN, SALESRENDER_URL
 
-# Заглушки для функций, которые должны быть определены в вашем проекте
+# ==========================================
+# Заглушки для функций (реализуй под свой проект)
+# ==========================================
 def client_in_db_or_cache(phone):
+    """Проверяет, есть ли клиент в локальной базе или кэше бота."""
     return False
 
 def save_client_state(phone, name, in_crm):
+    """Сохраняет состояние клиента в локальной БД."""
     pass
 
 def normalize_phone_number(phone):
+    """Нормализует телефон (убирает +, пробелы и т.д.)."""
     return phone
 
+# ==========================================
+# Получение данных заказа из CRM
+# ==========================================
 def fetch_order_from_crm(order_id):
     """Извлекает детали заказа из SalesRender CRM с помощью GraphQL."""
     headers = {
@@ -123,43 +135,55 @@ def fetch_order_from_crm(order_id):
         data = response.json().get("data", {}).get("ordersFetcher", {}).get("orders", [])
         return data[0] if data else None
     except Exception as e:
-        print(f"❌ Ошибка получения из CRM: {e}")
+        print(f"❌ Ошибка получения заказа из CRM: {e}")
         return None
 
+# ==========================================
+# Обработка нового лида
+# ==========================================
 def process_new_lead(name, phone, project_id):
     """
-    Регистрирует нового лида во внутренней БД бота и создает заказ в CRM, если это необходимо.
+    Регистрирует нового лида во внутренней БД бота и создает заказ в CRM.
+    project_id — обязательно строкой (GraphQL ID!)
     """
-    if client_in_db_or_cache(phone):
-        print(f"⚠️ Клиент {phone} уже в базе/кэше (в process_new_lead), пропускаем создание/обновление.")
-        return None
-
-    crm_exists_status = client_exists(phone)
-
-    if crm_exists_status:
-        print(f"DEBUG: Клиент {phone} найден в CRM, но новый для БД бота. Сохраняем в БД бота с in_crm=True.")
-        save_client_state(phone, name=name, in_crm=True)
-        return None
-    else:
-        print(f"DEBUG: Клиент {phone} НЕ найден в CRM. Создаем заказ и сохраняем в БД бота.")
-        order_id = create_order(name, phone, str(project_id))  # ✅ Передаем project_id как строку
-
-        if order_id:
-            print(f"✅ Заказ {order_id} создан для {name}, {phone}. Обновляем состояние в боте.")
-            save_client_state(phone, name=name, in_crm=True)
-            return order_id
-        else:
-            print(f"❌ Не удалось создать заказ для {name}, {phone}. Создаем запись клиента без CRM связи в боте.")
-            save_client_state(phone, name=name, in_crm=False)
+    try:
+        if client_in_db_or_cache(phone):
+            print(f"⚠️ Клиент {phone} уже в базе/кэше. Пропускаем создание.")
             return None
 
+        crm_exists_status = client_exists(phone)
+
+        if crm_exists_status:
+            print(f"✅ Клиент {phone} уже есть в CRM. Сохраняем локально.")
+            save_client_state(phone, name=name, in_crm=True)
+            return None
+        else:
+            print(f"➕ Клиент {phone} не найден в CRM. Создаём заказ...")
+            order_id = create_order(name, phone, str(project_id))  # ✅ ID как строка
+
+            if order_id:
+                print(f"✅ Заказ {order_id} создан для {name}, {phone}.")
+                save_client_state(phone, name=name, in_crm=True)
+                return order_id
+            else:
+                print(f"❌ Ошибка: заказ для {name}, {phone} не создан.")
+                save_client_state(phone, name=name, in_crm=False)
+                return None
+    except Exception as e:
+        print(f"❌ Ошибка в process_new_lead: {e}")
+        return None
+
+# ==========================================
+# Обработка входящего заказа из вебхука
+# ==========================================
 def process_salesrender_order(order):
     """
-    Обрабатывает вебхук заказа SalesRender. Обновляет состояние клиента и отправляет сообщение менеджеру.
+    Обрабатывает вебхук заказа SalesRender.
+    Обновляет состояние клиента и отправляет сообщение менеджеру.
     """
     try:
         if not order.get("customer") and "id" in order:
-            print(f"⚠ customer пуст, подтягиваю из CRM по ID {order['id']}")
+            print(f"⚠ customer пуст, подтягиваю по ID {order['id']} из CRM...")
             full_order = fetch_order_from_crm(order["id"])
             if full_order:
                 order = full_order
@@ -167,6 +191,7 @@ def process_salesrender_order(order):
                 print("❌ CRM не вернул данные — пропуск")
                 return
 
+        # Извлечение данных клиента
         first_name, last_name, phone = "", "", ""
         if "customer" in order:
             first_name = order.get("customer", {}).get("name", {}).get("firstName", "").strip()
@@ -186,6 +211,12 @@ def process_salesrender_order(order):
         if not phone:
             print("❌ Телефон отсутствует — пропуск")
             return
+
+        print(f"📩 Получен заказ из CRM: {name}, {phone}")
+
+        # Здесь можно обновить состояние клиента или уведомить менеджера
+        save_client_state(phone, name=name, in_crm=True)
+
     except Exception as e:
         print(f"❌ Ошибка в process_salesrender_order: {e}")
         
