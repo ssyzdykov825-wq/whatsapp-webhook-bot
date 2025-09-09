@@ -16,11 +16,28 @@ def webhook():
         with open("log.txt", "a") as f:
             f.write("RAW: " + json.dumps(data, ensure_ascii=False) + "\n")
 
-        contact = data["entry"][0]["changes"][0]["value"]["contacts"][0]
+        value = data["entry"][0]["changes"][0]["value"]
 
-        # добавляем плюс к номеру
-        phone = "+" + contact["wa_id"]
-        name = contact.get("profile", {}).get("name", "")
+        # пробуем достать из contacts
+        phone = None
+        name = ""
+
+        if "contacts" in value and len(value["contacts"]) > 0:
+            contact = value["contacts"][0]
+            phone = contact.get("wa_id")
+            name = contact.get("profile", {}).get("name", "")
+
+        # если contacts пустой — берём из messages
+        if not phone and "messages" in value and len(value["messages"]) > 0:
+            phone = value["messages"][0].get("from")
+
+        if phone:
+            phone = "+" + phone  # добавляем плюс
+        else:
+            phone = "+0000000000"  # fallback, чтобы всегда был номер
+
+        if not name:
+            name = "No name"
 
         payload = {
             "stream_code": FLOW_TOKEN,
