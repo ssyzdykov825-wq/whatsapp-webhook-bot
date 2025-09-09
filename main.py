@@ -12,20 +12,24 @@ def webhook():
     data = request.get_json()
 
     try:
-        value = data["entry"][0]["changes"][0]["value"]
+        # логируем сырой вебхук
+        with open("log.txt", "a", encoding="utf-8") as f:
+            f.write("===== Incoming WhatsApp message =====\n")
+            f.write(json.dumps(data, ensure_ascii=False, indent=2))
+            f.write("\n\n")
 
-        # сначала пробуем достать из contacts
-        phone = None
-        name = ""
+        # пробуем вытащить номер и имя
+        contact = data["entry"][0]["changes"][0]["value"]["contacts"][0]
+        phone = contact.get("wa_id")
+        name = contact.get("profile", {}).get("name", "")
 
-        if "contacts" in value and len(value["contacts"]) > 0:
-            contact = value["contacts"][0]
-            phone = contact.get("wa_id")
-            name = contact.get("profile", {}).get("name", "")
+        # если вдруг contacts пустые, берем номер из messages["from"]
+        if not phone:
+            phone = data["entry"][0]["changes"][0]["value"]["messages"][0].get("from")
 
-        # если номера нет в contacts, берём из messages.from
-        if not phone and "messages" in value and len(value["messages"]) > 0:
-            phone = value["messages"][0].get("from")
+        # добавляем + если нет
+        if phone and not phone.startswith("+"):
+            phone = f"+{phone}"
 
         payload = {
             "stream_code": FLOW_TOKEN,
@@ -41,17 +45,30 @@ def webhook():
             "Authorization": f"Bearer {CLIENT_TOKEN}"
         }
 
-        r = requests.post("https://affiliate.drcash.sh/v1/order",
-                          headers=headers,
-                          data=json.dumps(payload))
+        # логируем payload перед отправкой
+        with open("log.txt", "a", encoding="utf-8") as f:
+            f.write("===== Payload to Dr.Cash =====\n")
+            f.write(json.dumps(payload, ensure_ascii=False, indent=2))
+            f.write("\n\n")
 
-        # логируем для проверки
-        with open("log.txt", "a") as f:
-            f.write(f"{phone} | {name} | {r.text}\n")
+        r = requests.post(
+            "https://affiliate.drcash.sh/v1/order",
+            headers=headers,
+            data=json.dumps(payload)
+        )
+
+        # логируем ответ от Dr.Cash
+        with open("log.txt", "a", encoding="utf-8") as f:
+            f.write("===== Response from Dr.Cash =====\n")
+            f.write(r.text)
+            f.write("\n\n")
 
     except Exception as e:
-        with open("log.txt", "a") as f:
-            f.write(f"Error: {str(e)}\n")
+        with open("log.txt", "a", encoding="utf-8") as f:
+            f.write("===== ERROR =====\n")
+            f.write(str(e))
+            f.write("\n\n")
+        print("Error:", e)
 
     return jsonify({"status": "ok"}), 200
 
