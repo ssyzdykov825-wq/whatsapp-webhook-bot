@@ -23,7 +23,7 @@ def webhook():
                 "name": name,
                 "phone": phone
             },
-            "sub2": "whatsapp"
+            "sub2": "1"
         }
 
         headers = {
