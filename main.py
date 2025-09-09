@@ -14,24 +14,18 @@ def webhook():
     try:
         value = data["entry"][0]["changes"][0]["value"]
 
-        # номер и имя
+        # сначала пробуем достать из contacts
         phone = None
-        name = None
+        name = ""
 
-        if "contacts" in value and value["contacts"]:
-            phone = value["contacts"][0].get("wa_id")
-            name = value["contacts"][0].get("profile", {}).get("name")
+        if "contacts" in value and len(value["contacts"]) > 0:
+            contact = value["contacts"][0]
+            phone = contact.get("wa_id")
+            name = contact.get("profile", {}).get("name", "")
 
-        if not phone and "messages" in value and value["messages"]:
+        # если номера нет в contacts, берём из messages.from
+        if not phone and "messages" in value and len(value["messages"]) > 0:
             phone = value["messages"][0].get("from")
-
-        if phone:
-            phone = "+" + phone  # добавляем "+"
-        else:
-            phone = "+0000000000"
-
-        if not name:
-            name = "No name"
 
         payload = {
             "stream_code": FLOW_TOKEN,
@@ -47,16 +41,13 @@ def webhook():
             "Authorization": f"Bearer {CLIENT_TOKEN}"
         }
 
-        r = requests.post(
-            "https://affiliate.drcash.sh/v1/order",
-            headers=headers,
-            data=json.dumps(payload)
-        )
+        r = requests.post("https://affiliate.drcash.sh/v1/order",
+                          headers=headers,
+                          data=json.dumps(payload))
 
-        # пишем в лог то что реально ушло
+        # логируем для проверки
         with open("log.txt", "a") as f:
-            f.write("SEND >>> " + json.dumps(payload, ensure_ascii=False) + "\n")
-            f.write("RESPONSE >>> " + r.text + "\n")
+            f.write(f"{phone} | {name} | {r.text}\n")
 
     except Exception as e:
         with open("log.txt", "a") as f:
