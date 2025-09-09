@@ -12,29 +12,23 @@ def webhook():
     data = request.get_json()
 
     try:
-        # логируем весь JSON чтобы видеть что прилетает
-        with open("log.txt", "a") as f:
-            f.write("RAW: " + json.dumps(data, ensure_ascii=False) + "\n")
-
         value = data["entry"][0]["changes"][0]["value"]
 
-        # пробуем достать из contacts
+        # номер и имя
         phone = None
-        name = ""
+        name = None
 
-        if "contacts" in value and len(value["contacts"]) > 0:
-            contact = value["contacts"][0]
-            phone = contact.get("wa_id")
-            name = contact.get("profile", {}).get("name", "")
+        if "contacts" in value and value["contacts"]:
+            phone = value["contacts"][0].get("wa_id")
+            name = value["contacts"][0].get("profile", {}).get("name")
 
-        # если contacts пустой — берём из messages
-        if not phone and "messages" in value and len(value["messages"]) > 0:
+        if not phone and "messages" in value and value["messages"]:
             phone = value["messages"][0].get("from")
 
         if phone:
-            phone = "+" + phone  # добавляем плюс
+            phone = "+" + phone  # добавляем "+"
         else:
-            phone = "+0000000000"  # fallback, чтобы всегда был номер
+            phone = "+0000000000"
 
         if not name:
             name = "No name"
@@ -59,14 +53,14 @@ def webhook():
             data=json.dumps(payload)
         )
 
-        # логируем что реально уходит
+        # пишем в лог то что реально ушло
         with open("log.txt", "a") as f:
-            f.write(f"SEND: {phone} | {name} | {r.text}\n")
+            f.write("SEND >>> " + json.dumps(payload, ensure_ascii=False) + "\n")
+            f.write("RESPONSE >>> " + r.text + "\n")
 
     except Exception as e:
         with open("log.txt", "a") as f:
             f.write(f"Error: {str(e)}\n")
-        print("Error:", e)
 
     return jsonify({"status": "ok"}), 200
 
