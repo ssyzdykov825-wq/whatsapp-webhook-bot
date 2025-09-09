@@ -12,9 +12,14 @@ def webhook():
     data = request.get_json()
 
     try:
+        # логируем весь JSON чтобы видеть что прилетает
+        with open("log.txt", "a") as f:
+            f.write("RAW: " + json.dumps(data, ensure_ascii=False) + "\n")
+
         contact = data["entry"][0]["changes"][0]["value"]["contacts"][0]
 
-        phone = contact["wa_id"]
+        # добавляем плюс к номеру
+        phone = "+" + contact["wa_id"]
         name = contact.get("profile", {}).get("name", "")
 
         payload = {
@@ -31,15 +36,19 @@ def webhook():
             "Authorization": f"Bearer {CLIENT_TOKEN}"
         }
 
-        r = requests.post("https://affiliate.drcash.sh/v1/order",
-                          headers=headers,
-                          data=json.dumps(payload))
+        r = requests.post(
+            "https://affiliate.drcash.sh/v1/order",
+            headers=headers,
+            data=json.dumps(payload)
+        )
 
-        # логируем для проверки
+        # логируем что реально уходит
         with open("log.txt", "a") as f:
-            f.write(f"{phone} | {name} | {r.text}\n")
+            f.write(f"SEND: {phone} | {name} | {r.text}\n")
 
     except Exception as e:
+        with open("log.txt", "a") as f:
+            f.write(f"Error: {str(e)}\n")
         print("Error:", e)
 
     return jsonify({"status": "ok"}), 200
