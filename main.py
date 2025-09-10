@@ -28,18 +28,25 @@ def get_random_user_agent():
 def whatsapp_webhook():
     data = request.json
 
-    # Достаём сообщение и номер из webhook (360dialog)
-    message = data["messages"][0]["text"]["body"]
-    phone = data["messages"][0]["from"]
+    try:
+        # Забираем сообщение и телефон из структуры 360dialog
+        changes = data["entry"][0]["changes"][0]["value"]
+        message = changes["messages"][0]["text"]["body"]
+        phone = changes["messages"][0]["from"]
+
+        # Если есть имя в профиле — берём
+        name = changes["contacts"][0]["profile"].get("name", "Клиент WhatsApp")
+    except Exception as e:
+        return jsonify({"error": "Invalid webhook format", "details": str(e), "data": data}), 400
 
     # Собираем заказ под Shakes
     order = {
         "countryCode": "RU",
         "comment": message,
         "createdAt": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "ip": "127.0.0.1",   # Можно подставить реальный IP клиента, если есть
+        "ip": "127.0.0.1",
         "landingUrl": LANDING_URL,
-        "name": "Клиент WhatsApp",
+        "name": name,
         "offerId": OFFER_ID,
         "phone": phone,
         "referrer": None,
