@@ -24,27 +24,32 @@ USER_AGENTS = [
 def get_random_user_agent():
     return random.choice(USER_AGENTS)
 
+
 @app.route("/webhook", methods=["POST"])
 def whatsapp_webhook():
-    data = request.json
+    data = request.get_json()
+    print("📩 Incoming webhook:", data)
 
     try:
-        # Забираем сообщение и телефон из структуры 360dialog
-        changes = data["entry"][0]["changes"][0]["value"]
-        message = changes["messages"][0]["text"]["body"]
-        phone = changes["messages"][0]["from"]
+        # Проверяем, что это именно сообщение от пользователя
+        changes = data.get("entry", [])[0].get("changes", [])[0].get("value", {})
 
-        # Если есть имя в профиле — берём
-        name = changes["contacts"][0]["profile"].get("name", "Клиент WhatsApp")
+        if "messages" not in changes or not changes["messages"]:
+            return jsonify({"status": "ignored", "reason": "not a message"}), 200
+
+        message = changes["messages"][0].get("text", {}).get("body", "")
+        phone = changes["messages"][0].get("from", "")
+        name = changes.get("contacts", [{}])[0].get("profile", {}).get("name", "Клиент WhatsApp")
+
     except Exception as e:
-        return jsonify({"error": "Invalid webhook format", "details": str(e), "data": data}), 400
+        return jsonify({"error": "Invalid webhook format", "details": str(e)}), 400
 
-    # Собираем заказ под Shakes
+    # Формируем заказ под Shakes
     order = {
         "countryCode": "RU",
         "comment": message,
         "createdAt": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "ip": "127.0.0.1",
+        "ip": "127.0.0.1",  # при желании можно доставать реальный IP
         "landingUrl": LANDING_URL,
         "name": name,
         "offerId": OFFER_ID,
@@ -61,7 +66,7 @@ def whatsapp_webhook():
     url = f"http://{DOMAIN}?r=/api/order/in&key={API_KEY}"
 
     try:
-        response = requests.post(url, data=order)
+        response = requests.post(url, data=order, timeout=10)
         shakes_response = response.json()
     except Exception as e:
         shakes_response = {"error": str(e)}
@@ -71,6 +76,7 @@ def whatsapp_webhook():
         "sent_order": order,
         "shakes_response": shakes_response
     })
+
 
 if __name__ == "__main__":
     app.run(port=5000, debug=True)
