@@ -26,34 +26,6 @@ from salesrender_api import create_order, client_exists
 # Конфигурация
 # ==============================
 app = Flask(__name__)
-
-# --- Константы для KMA ---
-API_URL = "https://api.kma.biz/lead/add"
-API_KEY = "bj4x9DFUWECbPJJ-7m4rg_--lPDkmL-H"
-CHANNEL = "ZQHk1t"
-
-# --- Ключевые слова для KMA ---
-PARTNER_KEYWORDS = ["тест", "реклама", "лид"]
-
-# --- Функция для отправки в KMA ---
-def send_to_kma(name, phone):
-    payload = {
-        "channel": CHANNEL,
-        "name": name,
-        "phone": phone,
-        "country": "TR",
-        "referer": "whatsapp://chat"
-    }
-    headers = {
-        "Authorization": f"Bearer {API_KEY}",
-        "Content-Type": "application/x-www-form-urlencoded"
-    }
-    try:
-        r = requests.post(API_URL, data=payload, headers=headers, timeout=10)
-        print("KMA RESPONSE:", r.status_code, r.text)
-    except Exception as e:
-        print("❌ Ошибка при отправке в KMA:", e)
-
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 WHATSAPP_API_URL = "https://waba-v2.360dialog.io/messages"
@@ -590,13 +562,6 @@ def webhook():
             profile = (contacts[0] or {}).get("profile") or {}
             name = profile.get("name", "Клиент")
 
-        # ✅ Проверка: KMA или CRM
-        if any(word in user_msg.lower() for word in PARTNER_KEYWORDS):
-            print(f"DEBUG: Новый клиент {user_phone}, отправляем лид в KMA.")
-            send_to_kma(name, user_phone)
-            return jsonify({"status": "ok", "target": "kma"}), 200
-
-        # --- Если не KMA — продолжаем по CRM ---
         # ✅ Определяем projectId по тексту
         if "Саламатсыз" in user_msg.lower():
             project_id = 1
@@ -621,6 +586,7 @@ def webhook():
                 should_send_bot_reply = True
             else:
                 print(f"DEBUG: Новый клиент {user_phone}, регистрируем в CRM.")
+                # ✅ Передаем project_id
                 process_new_lead(name, user_phone, project_id)
                 should_send_bot_reply = False
 
@@ -632,7 +598,7 @@ def webhook():
         else:
             print(f"DEBUG: Ответ бота не отправляется. CRM обновлена для {user_phone}")
 
-        return jsonify({"status": "ok", "target": "crm"}), 200
+        return jsonify({"status": "ok"}), 200
 
     except Exception as e:
         print(f"❌ Ошибка вебхука: {e}")
