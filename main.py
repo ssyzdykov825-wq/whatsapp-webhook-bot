@@ -8,6 +8,79 @@ from flask import Flask, request, jsonify
 from openai import OpenAI
 from datetime import datetime, timedelta
 
+# --- Константы для KMA ---
+API_URL = "https://api.kma.biz/lead/add"
+API_KEY = "bj4x9DFUWECbPJJ-7m4rg_--lPDkmL-H"   # твой API-ключ из кабинета KMA
+CHANNEL = "ZQHk1t"                            # код потока в KMA
+
+# --- Ключевые слова ---
+PARTNER_KEYWORDS = ["тест", "реклама", "лид"]   # если слово есть → отправляем в KMA
+
+# --- Диапазоны IP Турции ---
+turkey_ip_ranges = [
+    ("31.145.0.0", "31.145.255.255"),   # Turk Telekom
+    ("78.160.0.0", "78.175.255.255"),   # Turk Telekom
+    ("88.224.0.0", "88.255.255.255"),   # TTNet
+    ("176.33.0.0", "176.33.255.255"),   # Vodafone Turkey
+    ("212.174.0.0", "212.175.255.255")  # Superonline
+]
+
+def random_turkey_ip():
+    start, end = random.choice(turkey_ip_ranges)
+    start_int = int(ipaddress.IPv4Address(start))
+    end_int = int(ipaddress.IPv4Address(end))
+    rand_int = random.randint(start_int, end_int)
+    return str(ipaddress.IPv4Address(rand_int))
+
+
+# --- Отправка в CRM (у тебя уже готово, здесь заглушка для примера) ---
+def send_to_crm(name, phone, text):
+    print(f"Отправка в CRM: {name}, {phone}, {text}")
+    # здесь вставь твой рабочий код интеграции с CRM
+
+
+# --- Отправка в KMA ---
+def send_to_kma(name, phone):
+    ip_address = random_turkey_ip()
+    payload = {
+        "channel": CHANNEL,
+        "name": name,
+        "phone": phone,
+        "ip": ip_address,
+        "country": "TR",
+        "referer": "whatsapp://chat"
+    }
+    headers = {
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/x-www-form-urlencoded"
+    }
+    r = requests.post(API_URL, data=payload, headers=headers)
+    print("KMA RESPONSE:", r.status_code, r.text)
+
+
+# --- Вебхук от WhatsApp ---
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    data = request.json
+
+    try:
+        # Достаём сообщение и данные клиента
+        message = data["entry"][0]["changes"][0]["value"]["messages"][0]
+        text = message.get("text", {}).get("body", "").lower()  # привели к нижнему регистру
+        user_phone = message["from"]
+        name = data["entry"][0]["changes"][0]["value"]["contacts"][0]["profile"]["name"]
+
+        # --- Проверка по ключевым словам ---
+        if any(word in text for word in PARTNER_KEYWORDS):
+            send_to_kma(name, user_phone)
+        else:
+            send_to_crm(name, user_phone, text)
+
+        return {"status": "ok"}
+
+    except Exception as e:
+        return {"error": str(e), "raw": data}, 400
+
 AUTO_REPLY_ENABLED = False
 
 # Import the new state management functions
