@@ -485,9 +485,11 @@ def send_whatsapp_message(phone, message):
 
 def get_gpt_response(user_msg, phone):
     """Получает ответ от GPT, делит по [SPLIT] или автоматически разбивает длинный текст."""
-    if not AUTO_REPLY_ENABLED:
-        print(f"⚠ AUTO_REPLY_ENABLED = False, ответ для {phone} не будет отправлен")
-        return None  # или пустая строка
+    # Тут можно всегда включать ответ, без флага
+    print(f"✅ Ответ для {phone} будет отправлен (AUTO_REPLY_ENABLED игнорируется)")
+    
+    reply = call_gpt_api(user_msg, phone)  # твоя функция получения ответа от GPT
+    return reply
 
     state = get_client_state(phone)
     messages = build_messages_for_gpt(state, user_msg)
