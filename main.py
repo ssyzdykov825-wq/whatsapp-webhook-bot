@@ -8,7 +8,7 @@ from flask import Flask, request, jsonify
 from openai import OpenAI
 from datetime import datetime, timedelta
 
-AUTO_REPLY_ENABLED = False
+AUTO_REPLY_ENABLED = True
 
 # Import the new state management functions
 from state_manager import (
