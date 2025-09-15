@@ -600,9 +600,9 @@ def webhook():
                 should_send_bot_reply = True
             else:
                 print(f"DEBUG: Новый клиент {user_phone}, регистрируем в CRM.")
-                # ✅ Передаем project_id
                 process_new_lead(name, user_phone, project_id)
-                should_send_bot_reply = False
+                save_client_state(user_phone, name=name, in_crm=True)
+                should_send_bot_reply = True
 
         # --- Отправка ответа только для известных клиентов ---
         if should_send_bot_reply and msg_type == "text" and user_msg:
