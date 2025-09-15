@@ -8,8 +8,6 @@ from flask import Flask, request, jsonify
 from openai import OpenAI
 from datetime import datetime, timedelta
 
-AUTO_REPLY_ENABLED = True
-
 # Import the new state management functions
 from state_manager import (
     init_db, load_cache_from_db,
@@ -484,16 +482,12 @@ def send_whatsapp_message(phone, message):
 
 
 def get_gpt_response(user_msg, phone):
-    """Получает ответ от GPT, делит по [SPLIT] или автоматически разбивает длинный текст."""
-    # Тут можно всегда включать ответ, без флага
-    print(f"✅ Ответ для {phone} будет отправлен (AUTO_REPLY_ENABLED игнорируется)")
-    
-    reply = call_gpt_api(user_msg, phone)  # твоя функция получения ответа от GPT
-    return reply
-
+    """Получает ответ от GPT, делит по [SPLIT] или автоматически разбивает длинный текст, 
+    отправляет в WhatsApp и обновляет CRM историю клиента.
+    """
     state = get_client_state(phone)
     messages = build_messages_for_gpt(state, user_msg)
-    
+
     try:
         response = client.chat.completions.create(
             model="gpt-4o",
@@ -505,7 +499,6 @@ def get_gpt_response(user_msg, phone):
             max_tokens=400
         )
         reply = response.choices[0].message.content.strip()
-        return reply
     except Exception as e:
         print(f"❌ Ошибка GPT: {e}")
         return "Кешіріңіз, қазір жауап бере алмаймын."
@@ -525,9 +518,10 @@ def get_gpt_response(user_msg, phone):
         next_stage_int = min(6, max(0, int(state["stage"])) + 1)
     except Exception:
         next_stage_int = 0
-    next_stage = str(next_stage_int)
 
+    next_stage = str(next_stage_int)
     new_history = list(state["history"]) + [{"user": user_msg, "bot": reply}]
+
     save_client_state(
         phone,
         stage=next_stage,
