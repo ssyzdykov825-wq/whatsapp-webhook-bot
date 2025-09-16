@@ -2,313 +2,22 @@ import os
 import time
 import threading
 import requests
-import json
-import re
 from flask import Flask, request, jsonify
 from openai import OpenAI
-from datetime import datetime, timedelta
-
-# Import the new state management functions
-from state_manager import (
-    init_db, load_cache_from_db,
-    get_client_state, save_client_state, client_in_db_or_cache,
-    follow_up_checker, cleanup_old_clients,
-    MAX_HISTORY_FOR_GPT
-)
-
-# ✨ ИМПОРТИРУЕМ ВАШИ РЕАЛЬНЫЕ ФУНКЦИИ SALESRENDER API - ПРЕДПОЛАГАЕТСЯ, ЧТО ОНИ РАБОТАЮТ КОРРЕКТНО ✨
-from salesrender_api import create_order, client_exists 
-
-
-# ==============================
-# Конфигурация
-# ==============================
+    
 app = Flask(__name__)
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 WHATSAPP_API_URL = "https://waba-v2.360dialog.io/messages"
-WHATSAPP_API_KEY = os.environ.get("WHATSAPP_API_KEY") # Убедитесь, что это установлено как переменная окружения
+WHATSAPP_API_KEY = os.environ.get("WHATSAPP_API_KEY")
 
 HEADERS = {
     "Content-Type": "application/json",
     "D360-API-KEY": WHATSAPP_API_KEY
 }
 
-# Кэш в оперативной памяти для дедупликации ID сообщений (сбрасывается при перезапуске приложения)
-PROCESSED_MESSAGES = set()
+USER_STATE = {}
 
-# Конфигурация SalesRender CRM (используется и в salesrender_api.py, но оставлена здесь для полноты, если нужна в других местах)
-# Убедитесь, что ваш salesrender_api.py использует эти значения или свой метод для конфигурации.
-SALESRENDER_URL = os.environ.get("SALESRENDER_URL", "https://de.backend.salesrender.com/companies/1123/CRM")
-SALESRENDER_TOKEN = os.environ.get("SALESRENDER_TOKEN", "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXNyZW5kZXIuY29tLyIsImF1ZCI6IkNSTSIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc")
-
-# ==============================
-# Нормализация номера телефона
-# ==============================
-def normalize_phone_number(phone_raw):
-    """
-    Нормализует номер телефона к международному формату с '+'.
-    Пример: '77071234567' -> '+77071234567'
-            '87071234567' -> '+77071234567'
-            '+77071234567' -> '+77071234567'
-    """
-    if not phone_raw:
-        return ""
-    
-    # Удаляем все нецифровые символы
-    phone_digits = re.sub(r'\D', '', phone_raw)
-
-    if not phone_digits:
-        return ""
-
-    # Если начинается с 8, меняем на 7
-    if phone_digits.startswith('8'):
-        phone_digits = '7' + phone_digits[1:]
-    
-    # Если не начинается с 7, и имеет длину, подходящую для Казахстана (предполагаем 10 цифр после '7')
-    if not phone_digits.startswith('7') and len(phone_digits) == 10: 
-        phone_digits = '7' + phone_digits
-    
-    # Добавляем '+' в начало, если его нет
-    if not phone_digits.startswith('+'):
-        return '+' + phone_digits
-    
-    return phone_digits
-
-# ==============================
-# Утилиты SalesRender
-# ==============================
-# Примечание: create_order и client_exists импортируются из salesrender_api.py
-# Убедитесь, что в salesrender_api.py реализованы:
-#   - client_exists(phone)
-#   - create_order(name, phone, project_id)
-#   - SALESRENDER_TOKEN
-#   - SALESRENDER_URL
-
-import requests
-from salesrender_api import client_exists, create_order, SALESRENDER_TOKEN, SALESRENDER_URL
-
-# ==========================================
-# Заглушки для функций (реализуй под свой проект)
-# ==========================================
-def client_in_db_or_cache(phone):
-    """Проверяет, есть ли клиент в локальной базе или кэше бота."""
-    return False
-
-def save_client_state(phone, name, in_crm):
-    """Сохраняет состояние клиента в локальной БД."""
-    pass
-
-def normalize_phone_number(phone):
-    """Нормализует телефон (убирает +, пробелы и т.д.)."""
-    return phone
-
-# ==========================================
-# Получение данных заказа из CRM
-# ==========================================
-def fetch_order_from_crm(order_id):
-    """Извлекает детали заказа из SalesRender CRM с помощью GraphQL."""
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": SALESRENDER_TOKEN
-    }
-    query = {
-        "query": f"""
-        query {{
-            ordersFetcher(filters: {{ include: {{ ids: ["{order_id}"] }} }}) {{
-                orders {{
-                    id
-                    data {{
-                        humanNameFields {{ value {{ firstName lastName }} }}
-                        phoneFields {{ value {{ international raw national }} }}
-                    }}
-                }}
-            }}
-        }}
-        """
-    }
-    try:
-        response = requests.post(SALESRENDER_URL, headers=headers, json=query, timeout=10)
-        response.raise_for_status()
-        data = response.json().get("data", {}).get("ordersFetcher", {}).get("orders", [])
-        return data[0] if data else None
-    except Exception as e:
-        print(f"❌ Ошибка получения заказа из CRM: {e}")
-        return None
-
-# ==========================================
-# Обработка нового лида
-# ==========================================
-def process_new_lead(name, phone, project_id):
-    """
-    Регистрирует нового лида во внутренней БД бота и создает заказ в CRM.
-    project_id — обязательно строкой (GraphQL ID!)
-    """
-    try:
-        if client_in_db_or_cache(phone):
-            print(f"⚠️ Клиент {phone} уже в базе/кэше. Пропускаем создание.")
-            return None
-
-        crm_exists_status = client_exists(phone)
-
-        if crm_exists_status:
-            print(f"✅ Клиент {phone} уже есть в CRM. Сохраняем локально.")
-            save_client_state(phone, name=name, in_crm=True)
-            return None
-        else:
-            print(f"➕ Клиент {phone} не найден в CRM. Создаём заказ...")
-            order_id = create_order(name, phone, str(project_id))  # ✅ ID как строка
-
-            if order_id:
-                print(f"✅ Заказ {order_id} создан для {name}, {phone}.")
-                save_client_state(phone, name=name, in_crm=True)
-                return order_id
-            else:
-                print(f"❌ Ошибка: заказ для {name}, {phone} не создан.")
-                save_client_state(phone, name=name, in_crm=False)
-                return None
-    except Exception as e:
-        print(f"❌ Ошибка в process_new_lead: {e}")
-        return None
-
-# ==========================================
-# Обработка входящего заказа из вебхука
-# ==========================================
-def process_salesrender_order(order):
-    """
-    Обрабатывает вебхук заказа SalesRender.
-    Обновляет состояние клиента и отправляет сообщение менеджеру.
-    """
-    try:
-        if not order.get("customer") and "id" in order:
-            print(f"⚠ customer пуст, подтягиваю по ID {order['id']} из CRM...")
-            full_order = fetch_order_from_crm(order["id"])
-            if full_order:
-                order = full_order
-            else:
-                print("❌ CRM не вернул данные — пропуск")
-                return
-
-        # Извлечение данных клиента
-        first_name, last_name, phone = "", "", ""
-        if "customer" in order:
-            first_name = order.get("customer", {}).get("name", {}).get("firstName", "").strip()
-            last_name = order.get("customer", {}).get("name", {}).get("lastName", "").strip()
-            phone = normalize_phone_number(order.get("customer", {}).get("phone", {}).get("raw", "").strip())
-        else:
-            human_fields = order.get("data", {}).get("humanNameFields", [])
-            phone_fields = order.get("data", {}).get("phoneFields", [])
-            if human_fields:
-                first_name = human_fields[0].get("value", {}).get("firstName", "").strip()
-                last_name = human_fields[0].get("value", {}).get("lastName", "").strip()
-            if phone_fields:
-                phone = normalize_phone_number(phone_fields[0].get("value", {}).get("international", "").strip())
-
-        name = f"{first_name} {last_name}".strip() or "Клиент"
-
-        if not phone:
-            print("❌ Телефон отсутствует — пропуск")
-            return
-
-        print(f"📩 Получен заказ из CRM: {name}, {phone}")
-
-        # Здесь можно обновить состояние клиента или уведомить менеджера
-        save_client_state(phone, name=name, in_crm=True)
-
-    except Exception as e:
-        print(f"❌ Ошибка в process_salesrender_order: {e}")
-        
-        # --- (Конец существующего кода парсинга) ---
-
-        # ✨ ИЗМЕНЕННАЯ ЛОГИКА ЗДЕСЬ ✨
-        # Всегда обновляем состояние клиента во внутренней БД бота, независимо от того, новый он или известный.
-        # Это гарантирует, что БД бота всегда актуальна со статусом CRM.
-        # Это заменяет старый блок `if client_in_db_or_cache(phone): ... return`.
-        if not client_in_db_or_cache(phone):
-            # Клиент новый для БД бота (пришел из вебхука SalesRender).
-            # Мы предполагаем, что если SalesRender отправляет вебхук, клиент неявно находится в CRM.
-            print(f"ℹ️ Клиент {phone} новый для базы бота (из вебхука SalesRender), добавляем.")
-            save_client_state(phone, name=name, in_crm=True)
-        else:
-            # Клиент уже известен БД бота. Просто убедимся, что его статус CRM обновлен (он должен быть true из хука CRM).
-            print(f"ℹ️ Клиент {phone} уже известен боту, обновляем его CRM статус.")
-            save_client_state(phone, name=name, in_crm=True) # Убедимся, что in_crm=True
-
-
-        # Логика сообщения менеджеру (эта часть теперь ВСЕГДА будет выполняться, если вебхук содержит телефон)
-        now = datetime.utcnow()
-        # last_sent по-прежнему в памяти для целей ограничения частоты (сбрасывается при перезапуске приложения)
-        # Примечание: last_sent - это in-memory dict, и оно не сохраняется при перезапусках.
-        # Если вы хотите, чтобы это ограничение частоты было персистентным, его нужно перенести в БД.
-        global last_sent # Объявляем last_sent как глобальную переменную
-        if phone not in last_sent: # Инициализация, если ключа нет
-            last_sent[phone] = datetime.fromtimestamp(0) # Устанавливаем очень старое время, чтобы первое сообщение прошло
-
-        if now - last_sent[phone] < timedelta(minutes=3):
-            print(f"⚠ Повторный недозвон по {phone} — пропускаем отправку менеджеру из-за ограничения частоты.")
-            return # Этот return по-прежнему хорош для ограничения частоты
-
-        # Определяем приветствие (UTC+6)
-        now_kz = now + timedelta(hours=6)
-        if 5 <= now_kz.hour < 12:
-            greeting = "Қайырлы таң"
-        elif 12 <= now_kz.hour < 18:
-            greeting = "Сәлеметсіз бе"
-        else:
-            greeting = "Қайырлы кеш"
-
-        # Генерируем сообщение через GPT
-        try:
-            # Для доступа к истории/стадии для GPT, если необходимо, явно загружаем состояние
-            current_client_state = get_client_state(phone) 
-            
-            # Корректируем промпт для сценария "недозвон", если данные вебхука содержат такой статус
-            # Предполагаем, что поле 'status' или аналогичное может существовать в полезной нагрузке вебхука,
-            # хотя оно не видно в предоставленном вами примере полезной нагрузки.
-            # Пока используем вашу существующую структуру промпта.
-            if name and name != "Клиент":
-                # Этот промпт подразумевает уведомление CRM о пропущенном звонке.
-                prompt = (
-                    f"{greeting}! Клиенттің аты {name}. "
-                    f"Оған қоңырау шалдық, бірақ байланыс болмады. "
-                    f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
-                    f"Хабарламаны Даурен атынан Healvix көз емдеу орталығынан жазып, көзге қатысты қандай проблема бар екенін сұра."
-                )
-            else:
-                prompt = (
-                    f"{greeting}! Біз клиентке қоңырау шалдық, бірақ байланыс болмады. "
-                    f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
-                    f"Хабарламаны Даурен атынан Healvix көз емдеу орталығынан жазып, көзге қатысты қандай проблема бар екенін сұра. "
-                    f"Есімін қолданбаңыз."
-                )
-            
-            gpt_response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.7
-            )
-            message_text = gpt_response.choices[0].message.content.strip()
-        except Exception as e:
-            print(f"❌ Ошибка GPT: {e}")
-            message_text = f"{greeting}! Біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
-
-        # Отправляем в WhatsApp
-        send_whatsapp_message(phone, message_text)
-
-        # Запоминаем отправку
-        last_sent[phone] = now
-        print(f"✅ Сообщение отправлено на {phone}")
-
-    except Exception as e:
-        print(f"❌ Ошибка обработки заказа: {e}")
-        import traceback
-        traceback.print_exc() # Добавляем трассировку стека для полной информации об ошибке
-
-# Словарь в памяти для ограничения частоты сообщений менеджеру (сбрасывается при перезапуске приложения)
-last_sent = {} # Инициализируем здесь
-# ==============================
-# Промпты GPT (уточненные)
-# ==============================
 # sales_prompts.py
 
 SALES_SCRIPT_PROMPT = """
@@ -341,7 +50,7 @@ SALES_SCRIPT_PROMPT = """
 """
 
 STAGE_PROMPTS = {
-    "0": "Сәлеметсіз бе! 👋 Есімім Даурен болады, Healvix көз орталығының маманымын. Есіміңіз кім? Көзіңізде қандай белгілер бар?",
+    "0": "Сәлеметсіз бе! 👋 Қалыңыз қалай? Менің атым Даурен, Healvix көз орталығының маманымын. Есіміңіз кім? Көзіңізде қандай белгілер бар?",
     
     "1": "Жалпы, көруіңізде қандай өзгерістер байқадыңыз? 👁️ Бұлдырлау, ұсақ әріптерді көрмеу, жарыққа сезімталдық бар ма?",
     
@@ -367,214 +76,308 @@ FAQ_PROMPTS = {
     "Жеткізу қалай?": "Қазақстанның барлық аймағына жеткіземіз 🚚. Бағасы 1 500–2 000 ₸."
 }
 
-def build_messages_for_gpt(state, user_msg):
-    """Строит сообщения для GPT, используя последние N сообщений из истории + текущую стадию."""
-    prompt = SALES_SCRIPT_PROMPT + "\n\n" + STAGE_PROMPTS.get(state["stage"], "")
-    messages = [{"role": "system", "content": prompt}]
-
-    recent_history = state["history"][-MAX_HISTORY_FOR_GPT:] 
-    for item in recent_history:
-        u = item.get("user", "")
-        b = item.get("bot", "")
-        if u:
-            messages.append({"role": "user", "content": u})
-        if b:
-            messages.append({"role": "assistant", "content": b})
-
-    messages.append({"role": "user", "content": user_msg})
-    return messages
-
-
-
-def split_message(text, max_length=150):
-    """Разделяет длинные тексты по предложениям или новым строкам для WhatsApp."""
+def split_message(text, max_length=1000):
     parts = []
-    text = text.strip()
     while len(text) > max_length:
-        split_index = max(text[:max_length].rfind("\n"), text[:max_length].rfind(". "))
-        if split_index == -1 or split_index < max_length * 0.5:
+        split_index = text[:max_length].rfind(". ")
+        if split_index == -1:
             split_index = max_length
-        parts.append(text[:split_index].strip())
-        text = text[split_index:].lstrip()
+        parts.append(text[:split_index+1].strip())
+        text = text[split_index+1:].strip()
     if text:
         parts.append(text)
     return parts
 
 def send_whatsapp_message(phone, message):
-    """Отправляет сообщение в WhatsApp через 360dialog API."""
-    payload = {"messaging_product": "whatsapp", "to": phone, "type": "text", "text": {"body": message}}
-    try:
-        response = requests.post(WHATSAPP_API_URL, headers=HEADERS, json=payload, timeout=15)
-        print(f"📤 Ответ WhatsApp: {getattr(response, 'status_code', 'нет_ответа')}")
-        return response
-    except Exception as e:
-        print(f"❌ Ошибка запроса WhatsApp: {e}")
-        return None
-
-
-def get_gpt_response(user_msg, phone):
-    state = get_client_state(phone)
-    messages = build_messages_for_gpt(state, user_msg)
-
-    # Добавляем правило сверху
-    system_rule = {
-        "role": "system",
-        "content": "Ты отвечаешь только на вопросы клиента и никогда не задаёшь сам новые вопросы. Жди, пока клиент спросит или напишет первым."
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": phone,
+        "type": "text",
+        "text": {"body": message}
     }
-    messages.insert(0, system_rule)  # вставляем в самое начало
+    response = requests.post(WHATSAPP_API_URL, headers=HEADERS, json=payload)
+    print(f"📤 Ответ от сервера: {response.status_code} {response.text}")
+    return response
 
+def get_gpt_response(user_msg, user_phone):
     try:
+        user_data = USER_STATE.get(user_phone, {})
+        history = user_data.get("history", [])
+        stage = user_data.get("stage", "0")
+
+        prompt = SALES_SCRIPT_PROMPT + "\n\n" + STAGE_PROMPTS.get(stage, "")
+
+        messages = [{"role": "system", "content": prompt}]
+        for item in history:
+            messages.append({"role": "user", "content": item["user"]})
+            messages.append({"role": "assistant", "content": item["bot"]})
+        messages.append({"role": "user", "content": user_msg})
+
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=messages,
-            temperature=0.75,
-            top_p=0.9,
-            frequency_penalty=0.4,
-            presence_penalty=0.5,
-            max_tokens=400
+            temperature=0.7
         )
         reply = response.choices[0].message.content.strip()
+
+        next_stage = str(int(stage) + 1) if int(stage) < 6 else "6"
+
+        USER_STATE[user_phone] = {
+            "history": history[-5:] + [{"user": user_msg, "bot": reply}],
+            "last_message": user_msg,
+            "stage": next_stage,
+            "last_time": time.time(),
+            "followed_up": False
+        }
+
+        return reply
     except Exception as e:
-        print(f"❌ Ошибка GPT: {e}")
-        return "Кешіріңіз, қазір жауап бере алмаймын."
+        print(f"❌ GPT қатесі: {e}")
+        return "Кешіріңіз, қазір жауап бере алмаймын. Кейінірек көріңіз."
 
-    return reply
+FOLLOW_UP_DELAY = 60
+FOLLOW_UP_MESSAGE = "Сізден жауап болмай жатыр 🤔 Сұрақтарыңыз болса, жауап беруге дайынмын."
 
-    # Разбиваем по [SPLIT] или по длине
-    if "[SPLIT]" in reply:
-        parts = [p.strip() for p in reply.split("[SPLIT]") if p.strip()]
-    else:
-        parts = split_message(reply, max_length=150)
+def follow_up_checker():
+    while True:
+        now = time.time()
+        for phone, state in list(USER_STATE.items()):
+            last_time = state.get("last_time")
+            last_stage = state.get("stage", "0")
+            if last_time:
+                elapsed = now - last_time
+                print(f"[⏱️] Проверка: {phone}, прошло {elapsed:.1f} сек")
+                if elapsed > FOLLOW_UP_DELAY and not state.get("followed_up"):
+                    print(f"[🔔] Отправка follow-up клиенту {phone}")
+                    send_whatsapp_message(phone, "📌 Айдос: " + FOLLOW_UP_MESSAGE)
+                    USER_STATE[phone]["followed_up"] = True
+        time.sleep(30)
 
-    # Отправка всех частей в WhatsApp
-    for part in parts:
-        send_whatsapp_message(phone, part)
+def start_followup_thread():
+    if not hasattr(app, 'followup_started'):
+        app.followup_started = True
+        thread = threading.Thread(target=follow_up_checker, daemon=True)
+        thread.start()
+        print("🟢 follow-up checker запущен")
 
-    # Обновление истории клиента
-    try:
-        next_stage_int = min(6, max(0, int(state["stage"])) + 1)
-    except Exception:
-        next_stage_int = 0
-
-    next_stage = str(next_stage_int)
-    new_history = list(state["history"]) + [{"user": user_msg, "bot": reply}]
-
-    save_client_state(
-        phone,
-        stage=next_stage,
-        history=new_history,
-        last_time=time.time(),
-        followed_up=False
-    )
-
-    return reply
-
-
-# ==============================
-# Маршруты Flask
-# ==============================
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    data = request.get_json(silent=True) or {}
-    print("📩 Входящий JSON:", data)
+    data = request.get_json()
+    print("📩 Келген JSON:", data)
 
     try:
-        entry = (data.get("entry") or [{}])[0]
-        changes = (entry.get("changes") or [{}])[0]
-        value = changes.get("value") or {}
-        messages = value.get("messages")
-        contacts = value.get("contacts", [])
+        messages = data["entry"][0]["changes"][0]["value"].get("messages")
+        if messages:
+            msg = messages[0]
+            user_phone = msg["from"]
+            user_msg = msg["text"]["body"]
 
-        if not messages:
-            print("INFO: Нет сообщений в полезной нагрузке вебхука.")
-            return jsonify({"status": "no_message"}), 200
+            print(f"💬 {user_phone}: {user_msg}")
 
-        msg = messages[0]
-        msg_id = msg["id"]
+            start_followup_thread()
 
-        if msg_id in PROCESSED_MESSAGES:
-            print(f"⏩ Сообщение {msg_id} уже обработано — пропускаем")
-            return jsonify({"status": "duplicate"}), 200
-        PROCESSED_MESSAGES.add(msg_id)
+            if USER_STATE.get(user_phone, {}).get("last_message") == user_msg:
+                print("⚠️ Қайталау — өткізіп жібереміз")
+                return jsonify({"status": "duplicate"}), 200
 
-        user_phone = normalize_phone_number(msg.get("from"))
-        user_msg = (msg.get("text") or {}).get("body", "").strip()
-        msg_type = msg.get("type")
-
-        print(f"DEBUG: Обрабатываем сообщение от {user_phone}, тип: {msg_type}, текст: '{user_msg}'")
-
-        if not user_phone:
-            print(f"INFO: Сообщение без номера — игнорируем")
-            return jsonify({"status": "ignored"}), 200
-
-        # --- Получаем имя ---
-        name = "Клиент"
-        if contacts and isinstance(contacts, list):
-            profile = (contacts[0] or {}).get("profile") or {}
-            name = profile.get("name", "Клиент")
-
-        # ✅ Определяем projectId по тексту
-        if "Саламатсыз" in user_msg.lower():
-            project_id = 1
-        elif "здравствуйте" in user_msg.lower():
-            project_id = 2
-        else:
-            project_id = 1  # по умолчанию
-        
-        should_send_bot_reply = False
-
-        # --- Проверка внутренней БД ---
-        client_in_bot_db = client_in_db_or_cache(user_phone)
-
-        if client_in_bot_db:
-            print(f"DEBUG: Клиент {user_phone} найден в БД бота. Продолжаем диалог.")
-            should_send_bot_reply = True
-        else:
-            crm_already_exists = client_exists(user_phone)
-            if crm_already_exists:
-                print(f"DEBUG: Клиент {user_phone} найден в CRM, добавляем в БД бота.")
-                save_client_state(user_phone, name=name, in_crm=True)
-                should_send_bot_reply = True
-            else:
-                print(f"DEBUG: Новый клиент {user_phone}, регистрируем в CRM.")
-                process_new_lead(name, user_phone, project_id)
-                save_client_state(user_phone, name=name, in_crm=True)
-                should_send_bot_reply = True
-
-        # --- Отправка ответа только для известных клиентов ---
-        if should_send_bot_reply and msg_type == "text" and user_msg:
             reply = get_gpt_response(user_msg, user_phone)
             for part in split_message(reply):
                 send_whatsapp_message(user_phone, part)
-        else:
-            print(f"DEBUG: Ответ бота не отправляется. CRM обновлена для {user_phone}")
-
-        return jsonify({"status": "ok"}), 200
 
     except Exception as e:
-        print(f"❌ Ошибка вебхука: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        print(f"❌ Обработка қатесі: {e}")
+
+    return jsonify({"status": "ok"}), 200
+
+@app.route('/', methods=['GET'])
+def home():
+    return "Healvix бот іске қосылды!", 200
+
+from datetime import datetime, timedelta
+
+# ==== Настройки ====
+
+SALESRENDER_URL = "https://de.backend.salesrender.com/companies/1123/CRM"
+SALESRENDER_TOKEN = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwczovL2RlLmJhY2tlbmQuc2FsZXNyZW5kZXIuY29tLyIsImF1ZCI6IkNSTSIsImp0aSI6ImI4MjZmYjExM2Q4YjZiMzM3MWZmMTU3MTMwMzI1MTkzIiwiaWF0IjoxNzU0NzM1MDE3LCJ0eXBlIjoiYXBpIiwiY2lkIjoiMTEyMyIsInJlZiI6eyJhbGlhcyI6IkFQSSIsImlkIjoiMiJ9fQ.z6NiuV4g7bbdi_1BaRfEqDj-oZKjjniRJoQYKgWsHcc"
+
+# Хранилище для защиты от повторов
+last_sent = {}
+
+# ==== Отправка сообщения в WhatsApp ====
+def handle_manager_message(phone, text):
+    """
+    Отправка сообщения в WhatsApp через 360dialog.
+    """
+    payload = {
+        "messaging_product": "whatsapp",  # ОБЯЗАТЕЛЬНОЕ поле!
+        "to": phone,
+        "type": "text",
+        "text": {
+            "body": text
+        }
+    }
+
+    print(f"[DEBUG] Отправка в WhatsApp: {phone} → {text}")
+    print(f"[DEBUG] Payload: {payload}")
+
+    try:
+        response = requests.post(
+            WHATSAPP_API_URL,
+            headers=HEADERS,
+            json=payload,
+            timeout=10
+        )
+        print(f"[DEBUG] Ответ WhatsApp API: {response.status_code} {response.text}")
+        response.raise_for_status()
+    except requests.RequestException as e:
+        print(f"❌ Ошибка отправки WhatsApp: {e}")
+
+# ==== Функция запроса в CRM ====
+def fetch_order_from_crm(order_id):
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": SALESRENDER_TOKEN
+    }
+    query = {
+        "query": f"""
+        query {{
+            ordersFetcher(filters: {{ include: {{ ids: ["{order_id}"] }} }}) {{
+                orders {{
+                    id
+                    data {{
+                        humanNameFields {{
+                            value {{
+                                firstName
+                                lastName
+                            }}
+                        }}
+                        phoneFields {{
+                            value {{
+                                international
+                                raw
+                                national
+                            }}
+                        }}
+                    }}
+                }}
+            }}
+        }}
+        """
+    }
+    try:
+        response = requests.post(SALESRENDER_URL, headers=headers, json=query, timeout=10)
+        response.raise_for_status()
+        data = response.json().get("data", {}).get("ordersFetcher", {}).get("orders", [])
+        return data[0] if data else None
+    except Exception as e:
+        print(f"❌ Ошибка запроса в CRM API: {e}")
+        return None
 
 
+# ==== Основная логика ====
+def process_salesrender_order(order):
+    try:
+        # Если customer пустой, пытаемся подтянуть из CRM
+        if not order.get("customer") and "id" in order:
+            print(f"⚠ customer пуст, подтягиваю из CRM по ID {order['id']}")
+            full_order = fetch_order_from_crm(order["id"])
+            if full_order:
+                order = full_order
+            else:
+                print("❌ CRM не вернул данные — пропуск")
+                return
+
+        first_name = ""
+        last_name = ""
+        phone = ""
+
+        if "customer" in order:
+            first_name = order.get("customer", {}).get("name", {}).get("firstName", "").strip()
+            last_name = order.get("customer", {}).get("name", {}).get("lastName", "").strip()
+            phone = order.get("customer", {}).get("phone", {}).get("raw", "").strip()
+        else:
+            human_fields = order.get("data", {}).get("humanNameFields", [])
+            phone_fields = order.get("data", {}).get("phoneFields", [])
+            if human_fields:
+                first_name = human_fields[0].get("value", {}).get("firstName", "").strip()
+                last_name = human_fields[0].get("value", {}).get("lastName", "").strip()
+            if phone_fields:
+                phone = phone_fields[0].get("value", {}).get("international", "").strip()
+
+        name = f"{first_name} {last_name}".strip()
+
+        if not phone:
+            print("❌ Телефон отсутствует — пропуск")
+            return
+
+        now = datetime.utcnow()
+        if phone in last_sent and now - last_sent[phone] < timedelta(minutes=3):
+            print(f"⚠ Повторный недозвон по {phone} — пропускаем")
+            return
+
+        # Определяем приветствие (UTC+6)
+        now_kz = now + timedelta(hours=6)
+        if 5 <= now_kz.hour < 12:
+            greeting = "Қайырлы таң"
+        elif 12 <= now_kz.hour < 18:
+            greeting = "Сәлеметсіз бе"
+        else:
+            greeting = "Қайырлы кеш"
+
+        # Генерация сообщения через GPT
+        try:
+            if name:
+                prompt = (
+                    f"{greeting}! Клиенттің аты {name}. "
+                    f"Оған қоңырау шалдық, бірақ байланыс болмады. "
+                    f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
+                    f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз."
+                )
+            else:
+                prompt = (
+                    f"{greeting}! Біз клиентке қоңырау шалдық, бірақ байланыс болмады. "
+                    f"Клиентке WhatsApp-та қысқа, жылы, достық хабарлама жазыңыз. "
+                    f"Хабарламаны Айдос атынан Healvix орталығынан жазыңыз. "
+                    f"Есімін қолданбаңыз."
+                )
+
+            gpt_response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7
+            )
+            message_text = gpt_response.choices[0].message.content.strip()
+        except Exception as e:
+            print(f"❌ GPT қатесі: {e}")
+            message_text = f"{greeting}! Біз сізге қоңырау шалдық, бірақ байланыс болмады. Уақытыңыз болса, хабарласыңыз."
+
+        # Отправляем в WhatsApp (твоя функция)
+        handle_manager_message(phone, message_text)
+
+        # Запоминаем отправку
+        last_sent[phone] = now
+        print(f"✅ Сообщение отправлено на {phone}")
+
+    except Exception as e:
+        print(f"❌ Ошибка обработки заказа: {e}")
+
+# ==== Вебхук ====
 @app.route('/salesrender-hook', methods=['POST'])
 def salesrender_hook():
-    print("=== Входящий запрос на /salesrender-hook ===")
+    print("=== Входящий запрос в /salesrender-hook ===")
     try:
-        data = request.get_json(silent=True) or {}
-        print("Полезная нагрузка:", json.dumps(data, indent=2, ensure_ascii=False))
+        data = request.get_json()
+        print("Payload:", data)
 
         orders = (
             data.get("data", {}).get("orders")
             or data.get("orders")
-            or [data] # Запасной вариант, если это один объект заказа напрямую
+            or [data]
         )
 
         if not orders or not isinstance(orders, list):
-            return jsonify({"error": "Заказы не найдены или неверный формат"}), 400
+            return jsonify({"error": "Нет заказов"}), 400
 
-        # Обрабатываем первый заказ (или циклически, если нужно для нескольких заказов) в отдельном потоке
         threading.Thread(
             target=process_salesrender_order,
             args=(orders[0],),
@@ -586,27 +389,5 @@ def salesrender_hook():
         print(f"❌ Ошибка парсинга вебхука: {e}")
         return jsonify({"error": str(e)}), 500
 
-
-@app.route('/', methods=['GET'])
-def home():
-    return "Healvix бот іске қосылды!", 200
-
-# ==============================
-# Запуск приложения - Перенесен за пределы if __name__ == "__main__" для Gunicorn
-# ==============================
-
-print("DEBUG: Запуск инициализации приложения (вне if __name__).")
-init_db() # Инициализируем базу данных
-print("DEBUG: init_db() базы данных завершено (вне if __name__).")
-load_cache_from_db() # Загружаем всех существующих клиентов в кэш
-print("DEBUG: Кэш загружен из БД (вне if __name__).")
-
-# Запускаем фоновые потоки для follow-up и очистки
-threading.Thread(target=follow_up_checker, args=(send_whatsapp_message,), daemon=True).start()
-print("DEBUG: Поток проверки follow-up запущен.")
-threading.Thread(target=cleanup_old_clients, daemon=True).start()
-print("DEBUG: Поток очистки старых клиентов запущен.")
-
 if __name__ == "__main__":
-    print("DEBUG: Приложение запущено в режиме локальной разработки через 'python app.py'.")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
