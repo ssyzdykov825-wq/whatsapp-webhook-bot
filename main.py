@@ -196,7 +196,7 @@ def get_gpt_response(user_msg, user_phone):
         print(f"❌ GPT қатесі: {e}")
         return "Кешіріңіз, қазір жауап бере алмаймын. Кейінірек көріңіз."
 
-FOLLOW_UP_DELAY = 60
+FOLLOW_UP_DELAY = 240000
 FOLLOW_UP_MESSAGE = "Сізден жауап болмай жатыр 🤔 Сұрақтарыңыз болса, жауап беруге дайынмын."
 
 def follow_up_checker():
@@ -211,12 +211,12 @@ def follow_up_checker():
                 if elapsed > FOLLOW_UP_DELAY and not state.get("followed_up"):
                     print(f"[🔔] Отправка follow-up клиенту {phone}")
                     send_whatsapp_message(phone, "📌: " + FOLLOW_UP_MESSAGE)
-                    USER_STATE[phone]["followed_up"] = False
+                    USER_STATE[phone]["followed_up"] = True
         time.sleep(30)
 
 def start_followup_thread():
     if not hasattr(app, 'followup_started'):
-        app.followup_started = False
+        app.followup_started = True
         thread = threading.Thread(target=follow_up_checker, daemon=True)
         thread.start()
         print("🟢 follow-up checker запущен")
