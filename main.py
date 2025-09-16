@@ -216,7 +216,7 @@ def follow_up_checker():
 
 def start_followup_thread():
     if not hasattr(app, 'followup_started'):
-        app.followup_started = True
+        app.followup_started = False
         thread = threading.Thread(target=follow_up_checker, daemon=True)
         thread.start()
         print("🟢 follow-up checker запущен")
