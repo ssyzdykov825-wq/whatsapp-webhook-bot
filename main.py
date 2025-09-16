@@ -385,6 +385,21 @@ def build_messages_for_gpt(state, user_msg):
     return messages
 
 
+
+def split_message(text, max_length=150):
+    """Разделяет длинные тексты по предложениям или новым строкам для WhatsApp."""
+    parts = []
+    text = text.strip()
+    while len(text) > max_length:
+        split_index = max(text[:max_length].rfind("\n"), text[:max_length].rfind(". "))
+        if split_index == -1 or split_index < max_length * 0.5:
+            split_index = max_length
+        parts.append(text[:split_index].strip())
+        text = text[split_index:].lstrip()
+    if text:
+        parts.append(text)
+    return parts
+
 def send_whatsapp_message(phone, message):
     """Отправляет сообщение в WhatsApp через 360dialog API."""
     payload = {"messaging_product": "whatsapp", "to": phone, "type": "text", "text": {"body": message}}
