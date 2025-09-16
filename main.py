@@ -413,11 +413,15 @@ def send_whatsapp_message(phone, message):
 
 
 def get_gpt_response(user_msg, phone):
-    """Получает ответ от GPT, делит по [SPLIT] или автоматически разбивает длинный текст, 
-    отправляет в WhatsApp и обновляет CRM историю клиента.
-    """
     state = get_client_state(phone)
     messages = build_messages_for_gpt(state, user_msg)
+
+    # Добавляем правило сверху
+    system_rule = {
+        "role": "system",
+        "content": "Ты отвечаешь только на вопросы клиента и никогда не задаёшь сам новые вопросы. Жди, пока клиент спросит или напишет первым."
+    }
+    messages.insert(0, system_rule)  # вставляем в самое начало
 
     try:
         response = client.chat.completions.create(
@@ -433,6 +437,8 @@ def get_gpt_response(user_msg, phone):
     except Exception as e:
         print(f"❌ Ошибка GPT: {e}")
         return "Кешіріңіз, қазір жауап бере алмаймын."
+
+    return reply
 
     # Разбиваем по [SPLIT] или по длине
     if "[SPLIT]" in reply:
